@@ -5,7 +5,7 @@ import numpy as np
 import csv
 from datetime import datetime
 
-LINK = "https://www.ebay.com/sch/i.html?_from=R40&_trksid=p4432023.m570.l1311&_nkw=nvidia+rtx+4090&_sacat=0pipipi"
+LINK = "https://www.ebay.com/sch/i.html?_from=R40&_trksid=p4432023.m570.l1311&_nkw=nvidia+rtx+5090&_sacat=0pipipi"
 
 
 # function to get prices from ebay search results
