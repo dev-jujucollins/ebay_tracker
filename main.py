@@ -31,7 +31,7 @@ def get_prices_by_link(link):
         return []
 
     search_results = search_results.find_all("li", {"class": "s-item"})
-    
+
     # list to store prices
     item_prices = []
 
@@ -77,7 +77,7 @@ def get_average(prices):
 # function to save prices to csv file
 def save_to_file(prices):
     if prices.size == 0:  # Check if the array is empty
-        logging.warning("No prices to save.")
+        logging.warning("No price to save.")
         return
 
     fields = [datetime.today().strftime("%Y-%m-%d"), np.around(get_average(prices), 2)]
@@ -85,7 +85,7 @@ def save_to_file(prices):
         with open("prices.csv", "a", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(fields)
-        logging.info("Prices saved to prices.csv")
+        logging.info("Price saved to prices.csv")
     except IOError as e:
         logging.error(f"Failed to write to file: {e}")
 
