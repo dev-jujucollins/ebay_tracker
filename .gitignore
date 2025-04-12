@@ -3,3 +3,4 @@
 .iml
 .idea
 prices.csv
+__pycache__/utils.cpython-311.pyc
