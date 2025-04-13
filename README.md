@@ -4,5 +4,5 @@ An automation script that scans through eBays search results of a given item, an
 
 Preview: 
 <img width="948" alt="Screenshot 2025-04-12 at 6 40 08 PM" src="https://github.com/user-attachments/assets/04169a9c-4a68-4324-a917-aeec97598cbe" />
-<img width="948" alt="Screenshot 2025-04-12 at 6 40 18 PM" src="https://github.com/user-attachments/assets/31224aae-b355-4b26-8341-8001a067ddfd" />
-<img width="948" alt="Screenshot 2025-04-12 at 6 40 29 PM" src="https://github.com/user-attachments/assets/eab6432d-6d64-4089-8c5b-d2ca14b6c2a4" />
+<img width="1043" alt="Screenshot 2025-04-13 at 12 09 29 PM" src="https://github.com/user-attachments/assets/1971c22a-3859-41a2-b5ec-b08261b46784" />
+<img width="1043" alt="Screenshot 2025-04-13 at 12 09 57 PM" src="https://github.com/user-attachments/assets/536a602a-c63c-4260-8bc7-de9ea572fe52" />
