@@ -10,7 +10,8 @@ from urllib.parse import urlparse, parse_qs
 # logging
 logging.basicConfig(
     level=logging.INFO,
-    format='\033[91m%(asctime)s\033[0m - \033[92m%(levelname)s\033[0m - \033[96m%(message)s\033[0m'
+    format='\033[91m%(asctime)s\033[0m - \033[92m%(levelname)s\033[0m - \033[96m%(message)s\033[0m',
+    datefmt='%H:%M:%S'
 )
 
 # gets prices from eBay search link
