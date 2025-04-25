@@ -14,6 +14,36 @@ logging.basicConfig(
     datefmt='%H:%M:%S'
 )
 
+# parses command line arguments
+def parse_arguments_and_generate_link(args):
+    if len(args) > 1:
+        item_name = " ".join(args[1:])
+        link = generate_ebay_search_link(item_name)
+        logging.info(f"Generated eBay search link: {link}")
+        return link, item_name
+    return None, None
+
+# validates the given url for scheme and domain
+def validate_url(link):
+    parsed_url = urlparse(link)
+    if not parsed_url.scheme:
+        logging.error("The URL is missing a scheme (e.g., https://). Please provide a valid URL.")
+        return False
+    if not parsed_url.netloc:
+        logging.error("The URL is missing a domain (e.g., www.example.com). Please provide a valid URL.")
+        return False
+    return True
+
+# extracts the item name from the link or provided argument
+def get_item_name(link, item_name=None):
+    if item_name:
+        return item_name
+    item_name = extract_item_name(link)
+    if not item_name:
+        logging.error("Failed to extract item name from the provided URL. Please provide a valid eBay search link.")
+        return None
+    return item_name
+
 # gets prices from eBay search link
 def get_prices_by_link(link):
     try:
@@ -62,17 +92,6 @@ def remove_outliers(prices, m=2):
 def get_average(prices):
     return np.mean(prices)
 
-# extracts item name
-def extract_item_name(link):
-    try:
-        query_params = parse_qs(urlparse(link).query)
-        item_name = query_params.get('_nkw', [None])[0]
-        if item_name:
-            return item_name.replace('+', ' ')
-    except Exception as e:
-        logging.warning(f"Failed to extract item name: {e}")
-    return None
-
 # saves prices to .csv
 def save_to_file(prices, item_name):
     if prices.size == 0:
@@ -87,3 +106,20 @@ def save_to_file(prices, item_name):
         logging.info("Price saved to prices.csv")
     except IOError as e:
         logging.error(f"Failed to write to file: {e}")
+
+# generates eBay search link based on item name
+def generate_ebay_search_link(item_name):
+    base_url = "https://www.ebay.com/sch/i.html"
+    query = f"?_nkw={item_name.replace(' ', '+')}"
+    return base_url + query
+
+# extracts item name
+def extract_item_name(link):
+    try:
+        query_params = parse_qs(urlparse(link).query)
+        item_name = query_params.get('_nkw', [None])[0]
+        if item_name:
+            return item_name.replace('+', ' ')
+    except Exception as e:
+        logging.warning(f"Failed to extract item name: {e}")
+    return None
