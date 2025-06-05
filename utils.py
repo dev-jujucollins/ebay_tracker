@@ -10,6 +10,7 @@ from urllib.parse import urlparse, parse_qs
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Tuple, Optional, Union
+import os
 
 # logging
 logging.basicConfig(
@@ -23,7 +24,7 @@ def parse_arguments_and_generate_link(
     args: List[str],
 ) -> Tuple[Optional[str], Optional[str]]:
     """
-    Parse command line arguments and generate an eBay search link.
+    Parses command line arguments and generate an eBay search link.
 
     Args:
         args: List of command line arguments
@@ -41,7 +42,7 @@ def parse_arguments_and_generate_link(
 
 def validate_url(link: str) -> bool:
     """
-    Validate the given URL for scheme and domain.
+    Validates the given URL for scheme and domain.
 
     Args:
         link: URL to validate
@@ -65,7 +66,7 @@ def validate_url(link: str) -> bool:
 
 def get_item_name(link: str, item_name: Optional[str] = None) -> Optional[str]:
     """
-    Extract the item name from the link or use the provided argument.
+    Extracts the item name from the link or use the provided argument.
 
     Args:
         link: eBay search URL
@@ -88,7 +89,7 @@ def get_item_name(link: str, item_name: Optional[str] = None) -> Optional[str]:
 @lru_cache(maxsize=128)
 def fetch_page_content(link: str) -> Optional[str]:
     """
-    Fetch and cache page content for a given URL.
+    Fetches and cache page content for a given URL.
 
     Args:
         link: URL to fetch
@@ -107,7 +108,7 @@ def fetch_page_content(link: str) -> Optional[str]:
 
 def parse_price(price_text: str) -> Optional[float]:
     """
-    Parse price text into a float value.
+    Parses price text into a float value.
 
     Args:
         price_text: Price text to parse
@@ -123,12 +124,13 @@ def parse_price(price_text: str) -> Optional[float]:
         return None
 
 
-def get_prices_by_link(link: str) -> List[float]:
+def get_prices_by_link(link: str, sold_only: bool = False) -> List[float]:
     """
-    Get prices from eBay search link using parallel processing.
+    Gets prices from eBay search link using parallel processing.
 
     Args:
         link: eBay search URL
+        sold_only: Checks whether to get sold prices only or not
 
     Returns:
         List[float]: List of valid prices found
@@ -146,9 +148,22 @@ def get_prices_by_link(link: str) -> List[float]:
     search_results = search_results.find_all("li", {"class": "s-item"})
 
     def process_result(result) -> Optional[float]:
-        price_tag = result.find("span", {"class": "s-item__price"})
-        if not price_tag or not price_tag.text or "to" in price_tag.text:
-            return None
+        if sold_only:
+            # For sold items, looks for the sold price
+            price_tag = result.find("span", {"class": "s-item__price"})
+            sold_tag = result.find("span", {"class": "POSITIVE"})
+            if (
+                not price_tag
+                or not sold_tag
+                or not price_tag.text
+                or "to" in price_tag.text
+            ):
+                return None
+        else:
+            # For listed items, just looks for the price
+            price_tag = result.find("span", {"class": "s-item__price"})
+            if not price_tag or not price_tag.text or "to" in price_tag.text:
+                return None
         return parse_price(price_tag.text)
 
     with ThreadPoolExecutor(max_workers=4) as executor:
@@ -159,21 +174,28 @@ def get_prices_by_link(link: str) -> List[float]:
     return prices
 
 
-def remove_outliers(prices: List[float], m: float = 2.0) -> np.ndarray:
+def remove_outliers(
+    prices: Union[List[float], np.ndarray], m: float = 2.0
+) -> np.ndarray:
     """
-    Remove outlier prices using the Z-score method.
+    Removes outlier prices using the Z-score method.
 
     Args:
-        prices: List of prices
+        prices: List or array of prices
         m: Number of standard deviations to use as threshold
 
     Returns:
         np.ndarray: Array of prices with outliers removed
     """
-    if not prices:
-        return np.array([])
+    if isinstance(prices, list):
+        if not prices:
+            return np.array([])
+        data = np.array(prices)
+    else:  # numpy array
+        if prices.size == 0:
+            return np.array([])
+        data = prices
 
-    data = np.array(prices)
     if len(data) < 4:  # Need at least 4 points for meaningful statistics
         return data
 
@@ -183,7 +205,7 @@ def remove_outliers(prices: List[float], m: float = 2.0) -> np.ndarray:
 
 def get_average(prices: Union[List[float], np.ndarray]) -> float:
     """
-    Calculate the average price.
+    Calculates the average price.
 
     Args:
         prices: List/array of prices
@@ -194,50 +216,72 @@ def get_average(prices: Union[List[float], np.ndarray]) -> float:
     return float(np.mean(prices))
 
 
-def save_to_file(prices: np.ndarray, item_name: str) -> None:
+def save_to_file(
+    listed_prices: np.ndarray, sold_prices: np.ndarray, item_name: str
+) -> None:
     """
-    Save prices to CSV file.
+    Saves prices to CSV file.
 
     Args:
-        prices: Array of prices
+        listed_prices: Array of listed prices
+        sold_prices: Array of sold prices
         item_name: Name of the item
     """
-    if prices.size == 0:
+    if listed_prices.size == 0 and sold_prices.size == 0:
         logging.warning("No prices to save.")
         return
+
+    listed_avg = (
+        get_average(remove_outliers(listed_prices)) if listed_prices.size > 0 else None
+    )
+    sold_avg = (
+        get_average(remove_outliers(sold_prices)) if sold_prices.size > 0 else None
+    )
 
     fields = [
         datetime.today().strftime("%Y-%m-%d"),
         item_name,
-        f"${np.around(get_average(prices), 2)}",
+        f"${np.around(listed_avg, 2)}" if listed_avg is not None else "N/A",
+        f"${np.around(sold_avg, 2)}" if sold_avg is not None else "N/A",
     ]
+
+    # Checks if file exists to determine if we need to write headers
+    file_exists = os.path.isfile("prices.csv")
+
     try:
         with open("prices.csv", "a", newline="") as f:
             writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(
+                    ["Date", "Item", "Average Listed Price", "Average Sold Price"]
+                )
             writer.writerow(fields)
-        logging.info("Price saved to prices.csv")
+        logging.info("Prices saved to prices.csv")
     except IOError as e:
         logging.error(f"Failed to write to file: {e}")
 
 
-def generate_ebay_search_link(item_name: str) -> str:
+def generate_ebay_search_link(item_name: str, sold_only: bool = False) -> str:
     """
-    Generate eBay search link based on item name.
+    Generates eBay search link based on item name.
 
     Args:
         item_name: Name of the item to search for
+        sold_only: Whether to search for sold items only
 
     Returns:
         str: Generated eBay search URL
     """
     base_url = "https://www.ebay.com/sch/i.html"
     query = f"?_nkw={item_name.replace(' ', '+')}"
+    if sold_only:
+        query += "&_sop=13&LH_Sold=1&LH_Complete=1"  # Sort by sold date, show sold items only
     return base_url + query
 
 
 def extract_item_name(link: str) -> Optional[str]:
     """
-    Extract item name from eBay search URL.
+    Extracts item name from eBay search URL.
 
     Args:
         link: eBay search URL
