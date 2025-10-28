@@ -173,9 +173,9 @@ def get_prices_by_link(link: str, sold_only: bool = False) -> List[float]:
             # For listed items, looks for the price
             price_tag = result.find("span", {"class": "s-item__price"})
             
-            # Try alternative selector if primary fails
+            # Try alternative selector if primary fails - use CSS selector for better performance
             if not price_tag:
-                price_tag = result.find("span", class_=lambda x: x and "s-item__price" in x)
+                price_tag = result.select_one("span[class*='s-item__price']")
             
             if not price_tag or not price_tag.text or "to" in price_tag.text.lower():
                 return None
