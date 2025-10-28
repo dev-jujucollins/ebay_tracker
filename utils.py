@@ -98,7 +98,17 @@ def fetch_page_content(link: str) -> Optional[str]:
         str: Page content if successful, None otherwise
     """
     try:
-        r = requests.get(link, timeout=10)
+        # Add headers to mimic a real browser
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
+        }
+        r = requests.get(link, headers=headers, timeout=10)
         r.raise_for_status()
         return r.text
     except RequestException as e:
@@ -156,13 +166,18 @@ def get_prices_by_link(link: str, sold_only: bool = False) -> List[float]:
                 not price_tag
                 or not sold_tag
                 or not price_tag.text
-                or "to" in price_tag.text
+                or "to" in price_tag.text.lower()
             ):
                 return None
         else:
-            # For listed items, just looks for the price
+            # For listed items, looks for the price
             price_tag = result.find("span", {"class": "s-item__price"})
-            if not price_tag or not price_tag.text or "to" in price_tag.text:
+            
+            # Try alternative selector if primary fails
+            if not price_tag:
+                price_tag = result.find("span", class_=lambda x: x and "s-item__price" in x)
+            
+            if not price_tag or not price_tag.text or "to" in price_tag.text.lower():
                 return None
         return parse_price(price_tag.text)
 
