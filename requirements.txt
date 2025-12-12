@@ -6,4 +6,4 @@ idna==3.7
 numpy==1.26.2
 requests==2.32.4
 soupsieve==2.5
-urllib3==2.5.0
+urllib3==2.6.0
