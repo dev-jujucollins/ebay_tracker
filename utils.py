@@ -1,16 +1,14 @@
-import requests
 import numpy as np
 import csv
 import logging
 import re
 from bs4 import BeautifulSoup
 from datetime import datetime
-from requests.exceptions import RequestException
 from urllib.parse import urlparse, parse_qs
-from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Tuple, Optional, Union
 import os
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 # logging
 logging.basicConfig(
@@ -86,10 +84,12 @@ def get_item_name(link: str, item_name: Optional[str] = None) -> Optional[str]:
     return item_name
 
 
-@lru_cache(maxsize=128)
+_page_cache: dict = {}
+
+
 def fetch_page_content(link: str) -> Optional[str]:
     """
-    Fetches and cache page content for a given URL.
+    Fetches page content using Playwright to bypass bot protection.
 
     Args:
         link: URL to fetch
@@ -97,21 +97,30 @@ def fetch_page_content(link: str) -> Optional[str]:
     Returns:
         str: Page content if successful, None otherwise
     """
+    if link in _page_cache:
+        return _page_cache[link]
+
     try:
-        # Add headers to mimic a real browser
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1'
-        }
-        r = requests.get(link, headers=headers, timeout=10)
-        r.raise_for_status()
-        return r.text
-    except RequestException as e:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            )
+            page = context.new_page()
+            page.goto(link, timeout=30000)
+
+            # Wait for search results to load
+            page.wait_for_selector('ul.srp-results', timeout=15000)
+
+            content = page.content()
+            browser.close()
+
+            _page_cache[link] = content
+            return content
+    except PlaywrightTimeoutError:
+        logging.error("Timeout waiting for eBay page to load")
+        return None
+    except Exception as e:
         logging.error(f"Failed to fetch data from eBay: {e}")
         return None
 
@@ -155,30 +164,30 @@ def get_prices_by_link(link: str, sold_only: bool = False) -> List[float]:
         logging.warning("No search results found on the page.")
         return []
 
-    search_results = search_results.find_all("li", {"class": "s-item"})
+    # Try new eBay structure (s-card) first, fall back to old (s-item)
+    search_results = search_results.find_all("li", {"class": "s-card"})
+    if not search_results:
+        search_results = search_results.find_all("li", {"class": "s-item"})
 
     def process_result(result) -> Optional[float]:
+        # Try new price class first, then fall back to old
+        price_tag = result.find("span", {"class": "s-card__price"})
+        if not price_tag:
+            price_tag = result.find("span", {"class": "s-item__price"})
+        if not price_tag:
+            price_tag = result.select_one("span[class*='price']")
+
+        if not price_tag or not price_tag.text or "to" in price_tag.text.lower():
+            return None
+
         if sold_only:
-            # For sold items, looks for the sold price
-            price_tag = result.find("span", {"class": "s-item__price"})
+            # For sold items, check for sold indicator
             sold_tag = result.find("span", {"class": "POSITIVE"})
-            if (
-                not price_tag
-                or not sold_tag
-                or not price_tag.text
-                or "to" in price_tag.text.lower()
-            ):
+            if not sold_tag:
+                sold_tag = result.find(string=re.compile(r'sold', re.I))
+            if not sold_tag:
                 return None
-        else:
-            # For listed items, looks for the price
-            price_tag = result.find("span", {"class": "s-item__price"})
-            
-            # Try alternative selector if primary fails - use CSS selector for better performance
-            if not price_tag:
-                price_tag = result.select_one("span[class*='s-item__price']")
-            
-            if not price_tag or not price_tag.text or "to" in price_tag.text.lower():
-                return None
+
         return parse_price(price_tag.text)
 
     with ThreadPoolExecutor(max_workers=4) as executor:
