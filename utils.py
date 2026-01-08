@@ -59,6 +59,11 @@ def validate_url(link: str) -> bool:
             "The URL is missing a domain (e.g., www.example.com). Please provide a valid URL."
         )
         return False
+    if "ebay." not in parsed_url.netloc:
+        logging.error(
+            "The URL must be an eBay domain (e.g., ebay.com, ebay.co.uk). Please provide a valid eBay URL."
+        )
+        return False
     return True
 
 
@@ -165,9 +170,9 @@ def get_prices_by_link(link: str, sold_only: bool = False) -> List[float]:
         return []
 
     # Try new eBay structure (s-card) first, fall back to old (s-item)
-    search_results = search_results.find_all("li", {"class": "s-card"})
-    if not search_results:
-        search_results = search_results.find_all("li", {"class": "s-item"})
+    items = search_results.find_all("li", {"class": "s-card"})
+    if not items:
+        items = search_results.find_all("li", {"class": "s-item"})
 
     def process_result(result) -> Optional[float]:
         # Try new price class first, then fall back to old
@@ -191,7 +196,7 @@ def get_prices_by_link(link: str, sold_only: bool = False) -> List[float]:
         return parse_price(price_tag.text)
 
     with ThreadPoolExecutor(max_workers=4) as executor:
-        prices = list(filter(None, executor.map(process_result, search_results)))
+        prices = list(filter(None, executor.map(process_result, items)))
 
     if not prices:
         logging.warning("No valid prices found.")
