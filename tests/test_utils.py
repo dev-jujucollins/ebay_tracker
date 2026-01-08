@@ -1,4 +1,5 @@
 # Pytests
+import numpy as np
 import pytest
 
 from main import process_item
@@ -47,8 +48,6 @@ def test_remove_outliers_filters_extreme_values():
 
 # CSV Saving
 def test_save_to_file_creates_csv(tmp_path, monkeypatch):
-    import numpy as np
-
     # Change working directory to tmp_path so "prices.csv" is created there
     monkeypatch.chdir(tmp_path)
     save_to_file(np.array([10.0, 20.0]), np.array([15.0, 25.0]), "Test Item")
