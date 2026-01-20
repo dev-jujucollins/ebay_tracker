@@ -2,8 +2,9 @@
 import sys
 import numpy as np
 from typing import Optional, Tuple
+import logging
+
 from utils import (
-    logging,
     get_prices_by_link,
     remove_outliers,
     get_average,
@@ -16,7 +17,9 @@ from utils import (
 
 def process_item(
     link: str, item_name: Optional[str] = None
-) -> Tuple[Optional[Tuple[float, float]], Optional[str]]:
+) -> Tuple[
+    Optional[Tuple[float, Optional[float], np.ndarray, np.ndarray]], Optional[str]
+]:
     """
     Processes an eBay item to get its average listed and sold prices.
 
@@ -57,17 +60,31 @@ def process_item(
             sold_prices_without_outliers = np.array([])
 
     listed_avg = get_average(listed_prices_without_outliers)
+    if listed_avg is None:
+        logging.error("No valid listed prices after removing outliers.")
+        return None, None
+
     sold_avg = (
         get_average(sold_prices_without_outliers)
         if sold_prices_without_outliers.size > 0
         else None
     )
 
-    return (listed_avg, sold_avg), item_name
+    return (
+        listed_avg,
+        sold_avg,
+        listed_prices_without_outliers,
+        sold_prices_without_outliers,
+    ), item_name
 
 
 def main() -> None:
     """Main function to run the eBay price tracker."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="\033[91m%(asctime)s\033[0m - \033[92m%(levelname)s\033[0m - \033[96m%(message)s\033[0m",
+        datefmt="%H:%M:%S",
+    )
     link, item_name = parse_arguments_and_generate_link(sys.argv)
 
     if not link:
@@ -76,20 +93,17 @@ def main() -> None:
             logging.error("No link provided. Please provide a valid eBay search link.")
             sys.exit(1)
 
-    prices, item_name = process_item(link, item_name)
-    if prices is None:
+    result, item_name = process_item(link, item_name)
+    if result is None or item_name is None:
         sys.exit(1)
 
-    listed_avg, sold_avg = prices
+    listed_avg, sold_avg, listed_prices, sold_prices = result
     print(f"Average listed price: ${np.around(listed_avg, 2)}")
     if sold_avg is not None:
         print(f"Average sold price: ${np.around(sold_avg, 2)}")
     else:
         print("No valid sold prices found.")
 
-    # Gets prices for saving to file
-    listed_prices = np.array(get_prices_by_link(link, sold_only=False))
-    sold_prices = np.array(get_prices_by_link(link, sold_only=True))
     save_to_file(listed_prices, sold_prices, item_name)
 
 

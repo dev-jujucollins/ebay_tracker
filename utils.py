@@ -10,12 +10,7 @@ from typing import List, Tuple, Optional, Union
 import os
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
-# logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="\033[91m%(asctime)s\033[0m - \033[92m%(levelname)s\033[0m - \033[96m%(message)s\033[0m",
-    datefmt="%H:%M:%S",
-)
+logger = logging.getLogger(__name__)
 
 
 def parse_arguments_and_generate_link(
@@ -33,7 +28,7 @@ def parse_arguments_and_generate_link(
     if len(args) > 1:
         item_name = " ".join(args[1:])
         link = generate_ebay_search_link(item_name)
-        logging.info(f"Generated eBay search link: {link}")
+        logger.info(f"Generated eBay search link: {link}")
         return link, item_name
     return None, None
 
@@ -50,17 +45,17 @@ def validate_url(link: str) -> bool:
     """
     parsed_url = urlparse(link)
     if not parsed_url.scheme:
-        logging.error(
+        logger.error(
             "The URL is missing a scheme (e.g., https://). Please provide a valid URL."
         )
         return False
     if not parsed_url.netloc:
-        logging.error(
+        logger.error(
             "The URL is missing a domain (e.g., www.example.com). Please provide a valid URL."
         )
         return False
     if "ebay." not in parsed_url.netloc:
-        logging.error(
+        logger.error(
             "The URL must be an eBay domain (e.g., ebay.com, ebay.co.uk). Please provide a valid eBay URL."
         )
         return False
@@ -82,7 +77,7 @@ def get_item_name(link: str, item_name: Optional[str] = None) -> Optional[str]:
         return item_name
     item_name = extract_item_name(link)
     if not item_name:
-        logging.error(
+        logger.error(
             "Failed to extract item name from the provided URL. Please provide a valid eBay search link."
         )
         return None
@@ -109,13 +104,13 @@ def fetch_page_content(link: str) -> Optional[str]:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             context = browser.new_context(
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
             page = context.new_page()
             page.goto(link, timeout=30000)
 
             # Wait for search results to load
-            page.wait_for_selector('ul.srp-results', timeout=15000)
+            page.wait_for_selector("ul.srp-results", timeout=15000)
 
             content = page.content()
             browser.close()
@@ -123,10 +118,10 @@ def fetch_page_content(link: str) -> Optional[str]:
             _page_cache[link] = content
             return content
     except PlaywrightTimeoutError:
-        logging.error("Timeout waiting for eBay page to load")
+        logger.error("Timeout waiting for eBay page to load")
         return None
     except Exception as e:
-        logging.error(f"Failed to fetch data from eBay: {e}")
+        logger.error(f"Failed to fetch data from eBay: {e}")
         return None
 
 
@@ -148,25 +143,21 @@ def parse_price(price_text: str) -> Optional[float]:
         return None
 
 
-def get_prices_by_link(link: str, sold_only: bool = False) -> List[float]:
+def parse_prices_from_html(content: str, sold_only: bool = False) -> List[float]:
     """
-    Gets prices from eBay search link using parallel processing.
+    Parses prices from eBay search HTML content.
 
     Args:
-        link: eBay search URL
+        content: Raw HTML content
         sold_only: Checks whether to get sold prices only or not
 
     Returns:
         List[float]: List of valid prices found
     """
-    content = fetch_page_content(link)
-    if not content:
-        return []
-
     page_parse = BeautifulSoup(content, "html.parser")
     search_results = page_parse.find("ul", {"class": "srp-results"})
     if not search_results:
-        logging.warning("No search results found on the page.")
+        logger.warning("No search results found on the page.")
         return []
 
     # Try new eBay structure (s-card) first, fall back to old (s-item)
@@ -189,7 +180,7 @@ def get_prices_by_link(link: str, sold_only: bool = False) -> List[float]:
             # For sold items, check for sold indicator
             sold_tag = result.find("span", {"class": "POSITIVE"})
             if not sold_tag:
-                sold_tag = result.find(string=re.compile(r'sold', re.I))
+                sold_tag = result.find(string=re.compile(r"sold", re.I))
             if not sold_tag:
                 return None
 
@@ -199,8 +190,26 @@ def get_prices_by_link(link: str, sold_only: bool = False) -> List[float]:
         prices = list(filter(None, executor.map(process_result, items)))
 
     if not prices:
-        logging.warning("No valid prices found.")
+        logger.warning("No valid prices found.")
     return prices
+
+
+def get_prices_by_link(link: str, sold_only: bool = False) -> List[float]:
+    """
+    Gets prices from eBay search link using parallel processing.
+
+    Args:
+        link: eBay search URL
+        sold_only: Checks whether to get sold prices only or not
+
+    Returns:
+        List[float]: List of valid prices found
+    """
+    content = fetch_page_content(link)
+    if not content:
+        return []
+
+    return parse_prices_from_html(content, sold_only=sold_only)
 
 
 def remove_outliers(
@@ -228,11 +237,15 @@ def remove_outliers(
     if len(data) < 4:  # Need at least 4 points for meaningful statistics
         return data
 
-    z_scores = np.abs((data - np.mean(data)) / np.std(data))
+    std_dev = np.std(data)
+    if std_dev == 0:
+        return data
+
+    z_scores = np.abs((data - np.mean(data)) / std_dev)
     return data[z_scores < m]
 
 
-def get_average(prices: Union[List[float], np.ndarray]) -> float:
+def get_average(prices: Union[List[float], np.ndarray]) -> Optional[float]:
     """
     Calculates the average price.
 
@@ -240,13 +253,25 @@ def get_average(prices: Union[List[float], np.ndarray]) -> float:
         prices: List/array of prices
 
     Returns:
-        float: Average price
+        float: Average price, or None when no prices exist
     """
-    return float(np.mean(prices))
+    if isinstance(prices, list):
+        if not prices:
+            return None
+        data = np.array(prices)
+    else:
+        if prices.size == 0:
+            return None
+        data = prices
+
+    return float(np.mean(data))
 
 
 def save_to_file(
-    listed_prices: np.ndarray, sold_prices: np.ndarray, item_name: str
+    listed_prices: np.ndarray,
+    sold_prices: np.ndarray,
+    item_name: str,
+    output_path: str = "prices.csv",
 ) -> None:
     """
     Saves prices to CSV file.
@@ -255,9 +280,10 @@ def save_to_file(
         listed_prices: Array of listed prices
         sold_prices: Array of sold prices
         item_name: Name of the item
+        output_path: Output CSV path
     """
     if listed_prices.size == 0 and sold_prices.size == 0:
-        logging.warning("No prices to save.")
+        logger.warning("No prices to save.")
         return
 
     listed_avg = (
@@ -275,19 +301,19 @@ def save_to_file(
     ]
 
     # Checks if file exists to determine if we need to write headers
-    file_exists = os.path.isfile("prices.csv")
+    file_exists = os.path.isfile(output_path)
 
     try:
-        with open("prices.csv", "a", newline="") as f:
+        with open(output_path, "a", newline="") as f:
             writer = csv.writer(f)
             if not file_exists:
                 writer.writerow(
                     ["Date", "Item", "Average Listed Price", "Average Sold Price"]
                 )
             writer.writerow(fields)
-        logging.info("Prices saved to prices.csv")
+        logger.info(f"Prices saved to {output_path}")
     except IOError as e:
-        logging.error(f"Failed to write to file: {e}")
+        logger.error(f"Failed to write to file: {e}")
 
 
 def generate_ebay_search_link(item_name: str, sold_only: bool = False) -> str:
@@ -324,5 +350,5 @@ def extract_item_name(link: str) -> Optional[str]:
         if item_name:
             return item_name.replace("+", " ")
     except Exception as e:
-        logging.warning(f"Failed to extract item name: {e}")
+        logger.warning(f"Failed to extract item name: {e}")
     return None
