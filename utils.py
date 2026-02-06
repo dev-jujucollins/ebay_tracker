@@ -8,7 +8,19 @@ from urllib.parse import urlparse, parse_qs
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Tuple, Optional, Union
 import os
+import asyncio
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import (
+    async_playwright,
+    TimeoutError as AsyncPlaywrightTimeoutError,
+)
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    before_sleep_log,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -87,9 +99,51 @@ def get_item_name(link: str, item_name: Optional[str] = None) -> Optional[str]:
 _page_cache: dict = {}
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type(
+        (PlaywrightTimeoutError, TimeoutError, ConnectionError)
+    ),
+    before_sleep=before_sleep_log(logger, logging.WARNING),
+    reraise=True,
+)
+def _fetch_page_content_with_retry(link: str) -> str:
+    """
+    Internal function that fetches page content with retry logic.
+
+    Args:
+        link: URL to fetch
+
+    Returns:
+        str: Page content
+
+    Raises:
+        PlaywrightTimeoutError: If page fails to load after retries
+        Exception: For other failures after retries
+    """
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        try:
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            page = context.new_page()
+            page.goto(link, timeout=30000)
+
+            # Wait for search results to load
+            page.wait_for_selector("ul.srp-results", timeout=15000)
+
+            return page.content()
+        finally:
+            browser.close()
+
+
 def fetch_page_content(link: str) -> Optional[str]:
     """
     Fetches page content using Playwright to bypass bot protection.
+
+    Uses exponential backoff retry (3 attempts) for transient failures.
 
     Args:
         link: URL to fetch
@@ -101,27 +155,14 @@ def fetch_page_content(link: str) -> Optional[str]:
         return _page_cache[link]
 
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
-            page = context.new_page()
-            page.goto(link, timeout=30000)
-
-            # Wait for search results to load
-            page.wait_for_selector("ul.srp-results", timeout=15000)
-
-            content = page.content()
-            browser.close()
-
-            _page_cache[link] = content
-            return content
+        content = _fetch_page_content_with_retry(link)
+        _page_cache[link] = content
+        return content
     except PlaywrightTimeoutError:
-        logger.error("Timeout waiting for eBay page to load")
+        logger.error("Timeout waiting for eBay page to load after 3 attempts")
         return None
     except Exception as e:
-        logger.error(f"Failed to fetch data from eBay: {e}")
+        logger.error(f"Failed to fetch data from eBay after 3 attempts: {e}")
         return None
 
 
@@ -352,3 +393,84 @@ def extract_item_name(link: str) -> Optional[str]:
     except Exception as e:
         logger.warning(f"Failed to extract item name: {e}")
     return None
+
+
+# =============================================================================
+# Async Functions for Concurrent Processing
+# =============================================================================
+
+_async_page_cache: dict = {}
+
+
+async def fetch_page_content_async(link: str) -> Optional[str]:
+    """
+    Async version of fetch_page_content using Playwright.
+
+    Uses exponential backoff retry (3 attempts) for transient failures.
+
+    Args:
+        link: URL to fetch
+
+    Returns:
+        str: Page content if successful, None otherwise
+    """
+    if link in _async_page_cache:
+        return _async_page_cache[link]
+
+    attempts = 0
+    max_attempts = 3
+    last_error = None
+
+    while attempts < max_attempts:
+        attempts += 1
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                try:
+                    context = await browser.new_context(
+                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    )
+                    page = await context.new_page()
+                    await page.goto(link, timeout=30000)
+                    await page.wait_for_selector("ul.srp-results", timeout=15000)
+                    content = await page.content()
+                    _async_page_cache[link] = content
+                    return content
+                finally:
+                    await browser.close()
+        except (AsyncPlaywrightTimeoutError, TimeoutError, ConnectionError) as e:
+            last_error = e
+            if attempts < max_attempts:
+                wait_time = 2**attempts  # Exponential backoff: 2, 4, 8 seconds
+                logger.warning(
+                    f"Attempt {attempts}/{max_attempts} failed, retrying in {wait_time}s..."
+                )
+                await asyncio.sleep(wait_time)
+        except Exception as e:
+            logger.error(f"Failed to fetch data from eBay: {e}")
+            return None
+
+    logger.error(
+        f"Failed to fetch eBay page after {max_attempts} attempts: {last_error}"
+    )
+    return None
+
+
+async def get_prices_by_link_async(link: str, sold_only: bool = False) -> List[float]:
+    """
+    Async version of get_prices_by_link.
+
+    Args:
+        link: eBay search URL
+        sold_only: Whether to get sold prices only
+
+    Returns:
+        List[float]: List of valid prices found
+    """
+    content = await fetch_page_content_async(link)
+    if not content:
+        return []
+
+    # parse_prices_from_html is CPU-bound, so we run it in a thread pool
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, parse_prices_from_html, content, sold_only)

@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
+import argparse
+import asyncio
 import sys
+
 import numpy as np
-from typing import Optional, Tuple
+
 import logging
+from typing import Optional, Tuple
 
 from utils import (
     get_prices_by_link,
@@ -11,7 +15,7 @@ from utils import (
     save_to_file,
     validate_url,
     get_item_name,
-    parse_arguments_and_generate_link,
+    generate_ebay_search_link,
 )
 
 
@@ -78,16 +82,12 @@ def process_item(
     ), item_name
 
 
-def main() -> None:
-    """Main function to run the eBay price tracker."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="\033[91m%(asctime)s\033[0m - \033[92m%(levelname)s\033[0m - \033[96m%(message)s\033[0m",
-        datefmt="%H:%M:%S",
-    )
-    link, item_name = parse_arguments_and_generate_link(sys.argv)
-
-    if not link:
+def run_single_item(item_name: Optional[str] = None) -> None:
+    """Run price check for a single item (original behavior)."""
+    if item_name:
+        link = generate_ebay_search_link(item_name)
+        logging.info(f"Generated eBay search link: {link}")
+    else:
         link = input("Enter an eBay search URL: ").strip()
         if not link:
             logging.error("No link provided. Please provide a valid eBay search link.")
@@ -105,6 +105,50 @@ def main() -> None:
         print("No valid sold prices found.")
 
     save_to_file(listed_prices, sold_prices, item_name)
+
+
+def run_watch_mode(watchlist_path: str) -> None:
+    """Run watch mode to check all items in watchlist for price alerts."""
+    from alerts import run_watch_mode as async_watch
+
+    asyncio.run(async_watch(watchlist_path))
+
+
+def main() -> None:
+    """Main function to run the eBay price tracker."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="\033[91m%(asctime)s\033[0m - \033[92m%(levelname)s\033[0m - \033[96m%(message)s\033[0m",
+        datefmt="%H:%M:%S",
+    )
+
+    parser = argparse.ArgumentParser(
+        description="eBay Price Tracker - Monitor prices and get alerts"
+    )
+    parser.add_argument(
+        "item",
+        nargs="*",
+        help="Item name to search for (e.g., 'Nintendo Switch 2')",
+    )
+    parser.add_argument(
+        "--watch",
+        "-w",
+        action="store_true",
+        help="Run in watch mode: check watchlist.yaml for price alerts",
+    )
+    parser.add_argument(
+        "--watchlist",
+        default="watchlist.yaml",
+        help="Path to watchlist YAML file (default: watchlist.yaml)",
+    )
+
+    args = parser.parse_args()
+
+    if args.watch:
+        run_watch_mode(args.watchlist)
+    else:
+        item_name = " ".join(args.item) if args.item else None
+        run_single_item(item_name)
 
 
 if __name__ == "__main__":

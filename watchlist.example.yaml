@@ -1,0 +1,14 @@
+# eBay Price Tracker Watchlist
+# Copy this file to watchlist.yaml and customize it:
+#   cp watchlist.example.yaml watchlist.yaml
+
+# Optional: Discord/Slack webhook URL for notifications
+# webhook_url: "https://discord.com/api/webhooks/your-webhook-id/your-webhook-token"
+
+items:
+  - name: "Nintendo Switch 2"
+    target_price: 400.00
+
+  - name: "RTX 5090"
+    target_price: 1800.00
+    check_sold: true  # Monitor sold prices instead of listings
