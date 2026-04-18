@@ -1,11 +1,16 @@
 """Tests for the alerts module."""
 
+import asyncio
+import pytest
 from pathlib import Path
 
 from alerts import (
+    WatchlistConfig,
     WatchlistItem,
     check_price_alert,
+    check_item_with_semaphore,
     load_watchlist,
+    process_watchlist,
 )
 
 
@@ -105,6 +110,22 @@ items:
         config = load_watchlist(str(watchlist_path))
         assert config is None
 
+    def test_load_empty_watchlist(self, tmp_path: Path):
+        """Should return None for empty YAML content."""
+        watchlist_path = tmp_path / "watchlist.yaml"
+        watchlist_path.write_text("")
+
+        config = load_watchlist(str(watchlist_path))
+        assert config is None
+
+    def test_load_watchlist_with_non_mapping_top_level(self, tmp_path: Path):
+        """Should return None when YAML top level is not a mapping."""
+        watchlist_path = tmp_path / "watchlist.yaml"
+        watchlist_path.write_text("- name: Test Item\n")
+
+        config = load_watchlist(str(watchlist_path))
+        assert config is None
+
 
 class TestWatchlistItem:
     """Tests for WatchlistItem dataclass."""
@@ -118,3 +139,42 @@ class TestWatchlistItem:
         """check_sold can be set explicitly."""
         item = WatchlistItem(name="Test", target_price=100.0, check_sold=True)
         assert item.check_sold is True
+
+
+@pytest.mark.anyio
+async def test_check_item_with_semaphore_handles_fetch_failure(mocker):
+    """Fetch exceptions should not abort item processing."""
+    item = WatchlistItem(name="Broken Item", target_price=100.0)
+    mocker.patch("alerts.fetch_item_price", side_effect=RuntimeError("boom"))
+
+    result = await check_item_with_semaphore(item, semaphore=asyncio.Semaphore(1))
+
+    assert result.item == item
+    assert result.current_price is None
+    assert result.is_below_target is False
+
+
+@pytest.mark.anyio
+async def test_process_watchlist_continues_after_single_item_failure(mocker):
+    """One item failure should not abort rest of watchlist."""
+    item_ok = WatchlistItem(name="Good Item", target_price=100.0)
+    item_bad = WatchlistItem(name="Bad Item", target_price=100.0)
+    config = WatchlistConfig(webhook_url=None, items=[item_bad, item_ok])
+
+    async def fake_fetch(item: WatchlistItem) -> float:
+        if item.name == "Bad Item":
+            raise RuntimeError("boom")
+        return 90.0
+
+    log_alert = mocker.patch("alerts.log_alert_to_file")
+    mocker.patch("alerts.fetch_item_price", side_effect=fake_fetch)
+
+    results = await process_watchlist(config, max_concurrent=2)
+
+    assert len(results) == 2
+    by_name = {result.item.name: result for result in results}
+    assert by_name["Bad Item"].current_price is None
+    assert by_name["Bad Item"].is_below_target is False
+    assert by_name["Good Item"].current_price == 90.0
+    assert by_name["Good Item"].is_below_target is True
+    log_alert.assert_called_once_with(by_name["Good Item"])

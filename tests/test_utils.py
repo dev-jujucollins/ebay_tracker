@@ -118,3 +118,17 @@ def test_process_item_full_workflow(mocker):
     assert sold_avg is None
     assert listed_prices.size > 0
     assert sold_prices.size == 0
+
+
+def test_process_item_uses_sold_search_link(mocker):
+    mock_get_prices = mocker.patch(
+        "main.get_prices_by_link",
+        side_effect=[[10.0, 20.0, 30.0], [8.0, 9.0, 10.0]],
+    )
+
+    result, _ = process_item("https://ebay.com/test", "test item")
+
+    assert result is not None
+    sold_call = mock_get_prices.call_args_list[1]
+    assert sold_call.args[0].endswith("LH_Sold=1&LH_Complete=1")
+    assert sold_call.kwargs["sold_only"] is True

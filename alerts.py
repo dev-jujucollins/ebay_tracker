@@ -68,6 +68,13 @@ def load_watchlist(path: str = "watchlist.yaml") -> Optional[WatchlistConfig]:
         with open(path) as f:
             data = yaml.safe_load(f)
 
+        if data is None:
+            logger.error("Watchlist file is empty")
+            return None
+        if not isinstance(data, dict):
+            logger.error("Watchlist must contain a YAML mapping at top level")
+            return None
+
         items = [
             WatchlistItem(
                 name=item["name"],
@@ -219,7 +226,11 @@ async def check_item_with_semaphore(
     """
     async with semaphore:
         logger.info(f"Checking price for: {item.name}")
-        current_price = await fetch_item_price(item)
+        try:
+            current_price = await fetch_item_price(item)
+        except Exception as e:
+            logger.exception(f"Price check failed for {item.name}: {e}")
+            current_price = None
         return check_price_alert(item, current_price)
 
 

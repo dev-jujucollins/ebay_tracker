@@ -53,7 +53,8 @@ def process_item(
         return None, None
 
     # Gets sold prices
-    sold_prices = get_prices_by_link(link, sold_only=True)
+    sold_link = generate_ebay_search_link(item_name, sold_only=True)
+    sold_prices = get_prices_by_link(sold_link, sold_only=True)
     if not sold_prices:
         logging.warning("No sold prices found for the item.")
         sold_prices_without_outliers = np.array([])
