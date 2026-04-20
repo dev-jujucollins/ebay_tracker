@@ -1,12 +1,12 @@
 # eBay Price Tracker
 
-A Python tool that monitors eBay prices and sends alerts when items drop below your target price. Features automatic retry logic, concurrent processing, and Discord/Slack notifications.
+A Python tool that monitors eBay prices and sends alerts when items drop below your target price. Features automatic retry logic, concurrent processing, and Discord webhook notifications.
 
 ## Features
 
 - **Price Tracking** - Scrapes eBay search results and calculates average prices (with outlier removal)
 - **Price Alerts** - Get notified when items drop below your target price
-- **Webhook Notifications** - Send alerts to Discord, Slack, or any webhook endpoint
+- **Webhook Notifications** - Send alerts to Discord webhooks
 - **Retry Logic** - Automatic retry with exponential backoff for reliable scraping
 - **Async Processing** - Check multiple items concurrently (up to 3 at a time)
 
@@ -53,10 +53,22 @@ Results are saved to `prices.csv`:
 
 ### Watch Mode (Price Alerts)
 
-Monitor multiple items and get notified when prices drop below your targets:
+Monitor multiple items and get notified when prices drop below your targets. By default, watch mode keeps running and checks every 5 minutes until you stop it.
 
 ```bash
 uv run main.py --watch
+```
+
+Use a custom interval:
+
+```bash
+uv run main.py --watch --watch-interval 120
+```
+
+Run one pass without staying in watch loop:
+
+```bash
+uv run main.py --watch --watch-once
 ```
 
 #### Setting Up Your Watchlist
@@ -64,7 +76,7 @@ uv run main.py --watch
 Create a `watchlist.yaml` file:
 
 ```yaml
-# Optional: Discord/Slack webhook for notifications
+# Optional: Discord webhook for notifications
 webhook_url: "https://discord.com/api/webhooks/your-webhook-id/your-token"
 
 items:
@@ -112,8 +124,10 @@ uv run main.py --watch --watchlist my_items.yaml
 | Option | Description |
 |--------|-------------|
 | `<item>` | Item name to search (e.g., `"playstation 5"`) |
-| `--watch`, `-w` | Run in watch mode to check watchlist for alerts |
+| `--watch`, `-w` | Run continuous watch mode until stopped |
 | `--watchlist` | Path to watchlist YAML file (default: `watchlist.yaml`) |
+| `--watch-interval` | Seconds between checks in watch mode (default: `300`) |
+| `--watch-once` | Check watchlist once and exit |
 
 ## Project Structure
 

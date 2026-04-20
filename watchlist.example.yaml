@@ -2,7 +2,7 @@
 # Copy this file to watchlist.yaml and customize it:
 #   cp watchlist.example.yaml watchlist.yaml
 
-# Optional: Discord/Slack webhook URL for notifications
+# Optional: Discord webhook URL for notifications
 # webhook_url: "https://discord.com/api/webhooks/your-webhook-id/your-webhook-token"
 
 items:

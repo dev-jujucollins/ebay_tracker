@@ -1,28 +1,50 @@
-import numpy as np
+import asyncio
 import csv
 import logging
+from pathlib import Path
 import re
-from bs4 import BeautifulSoup
-from datetime import datetime
-from urllib.parse import urlparse, parse_qs
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Tuple, Optional, Union
-import os
-import asyncio
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from datetime import datetime
+from typing import List, Optional, Tuple, Union
+from urllib.parse import parse_qs, urlparse
+
+import numpy as np
+from bs4 import BeautifulSoup
 from playwright.async_api import (
     async_playwright,
     TimeoutError as AsyncPlaywrightTimeoutError,
 )
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from tenacity import (
+    before_sleep_log,
     retry,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
-    before_sleep_log,
 )
 
 logger = logging.getLogger(__name__)
+ALLOWED_EBAY_DOMAINS = {
+    "ebay.com",
+    "ebay.ca",
+    "ebay.com.au",
+    "ebay.co.uk",
+    "ebay.de",
+    "ebay.fr",
+    "ebay.it",
+    "ebay.es",
+    "ebay.nl",
+    "ebay.be",
+    "ebay.ie",
+    "ebay.ch",
+    "ebay.at",
+    "ebay.pl",
+    "ebay.com.hk",
+    "ebay.com.sg",
+    "ebay.com.my",
+    "ebay.ph",
+    "ebay.co.jp",
+}
 
 
 def parse_arguments_and_generate_link(
@@ -66,7 +88,11 @@ def validate_url(link: str) -> bool:
             "The URL is missing a domain (e.g., www.example.com). Please provide a valid URL."
         )
         return False
-    if "ebay." not in parsed_url.netloc:
+    hostname = (parsed_url.hostname or "").casefold()
+    if not any(
+        hostname == domain or hostname.endswith(f".{domain}")
+        for domain in ALLOWED_EBAY_DOMAINS
+    ):
         logger.error(
             "The URL must be an eBay domain (e.g., ebay.com, ebay.co.uk). Please provide a valid eBay URL."
         )
@@ -342,10 +368,11 @@ def save_to_file(
     ]
 
     # Checks if file exists to determine if we need to write headers
-    file_exists = os.path.isfile(output_path)
+    output_file = Path(output_path)
+    file_exists = output_file.is_file()
 
     try:
-        with open(output_path, "a", newline="") as f:
+        with output_file.open("a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             if not file_exists:
                 writer.writerow(

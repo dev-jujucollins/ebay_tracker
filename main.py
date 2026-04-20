@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 import argparse
 import asyncio
+import logging
 import sys
 
 import numpy as np
 
-import logging
 from typing import Optional, Tuple
 
 from utils import (
@@ -108,11 +108,29 @@ def run_single_item(item_name: Optional[str] = None) -> None:
     save_to_file(listed_prices, sold_prices, item_name)
 
 
-def run_watch_mode(watchlist_path: str) -> None:
-    """Run watch mode to check all items in watchlist for price alerts."""
+def positive_interval(value: str) -> float:
+    """Parses watch interval and rejects non-positive values."""
+    interval = float(value)
+    if interval <= 0:
+        raise argparse.ArgumentTypeError("watch interval must be greater than 0")
+    return interval
+
+
+def run_watch_mode(
+    watchlist_path: str,
+    interval_seconds: float,
+    run_once: bool,
+) -> None:
+    """Run watch mode to monitor watchlist for price alerts."""
     from alerts import run_watch_mode as async_watch
 
-    asyncio.run(async_watch(watchlist_path))
+    asyncio.run(
+        async_watch(
+            watchlist_path,
+            interval_seconds=interval_seconds,
+            run_once=run_once,
+        )
+    )
 
 
 def main() -> None:
@@ -135,18 +153,29 @@ def main() -> None:
         "--watch",
         "-w",
         action="store_true",
-        help="Run in watch mode: check watchlist.yaml for price alerts",
+        help="Run continuous watch mode and keep checking watchlist for price alerts",
     )
     parser.add_argument(
         "--watchlist",
         default="watchlist.yaml",
         help="Path to watchlist YAML file (default: watchlist.yaml)",
     )
+    parser.add_argument(
+        "--watch-interval",
+        type=positive_interval,
+        default=300.0,
+        help="Seconds between watch checks (default: 300)",
+    )
+    parser.add_argument(
+        "--watch-once",
+        action="store_true",
+        help="Check watchlist once, then exit",
+    )
 
     args = parser.parse_args()
 
     if args.watch:
-        run_watch_mode(args.watchlist)
+        run_watch_mode(args.watchlist, args.watch_interval, args.watch_once)
     else:
         item_name = " ".join(args.item) if args.item else None
         run_single_item(item_name)

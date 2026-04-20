@@ -31,8 +31,11 @@ def test_parse_price_invalid():
     "url,expected",
     [
         ("https://www.ebay.com/sch/...", True),
+        ("https://www.ebay.co.uk/sch/...", True),
         ("http://ebay.com/sch/...", True),
         ("https://evil.com", False),
+        ("https://evil-ebay.com/sch/...", False),
+        ("https://ebay.evil.com/sch/...", False),
         ("not-a-url", False),
     ],
 )

@@ -1,16 +1,20 @@
 """Tests for the alerts module."""
 
 import asyncio
-import pytest
 from pathlib import Path
+
+import pytest
 
 from alerts import (
     WatchlistConfig,
     WatchlistItem,
+    build_webhook_payload,
     check_price_alert,
     check_item_with_semaphore,
+    dispatch_alerts,
     load_watchlist,
     process_watchlist,
+    run_watch_mode,
 )
 
 
@@ -126,6 +130,20 @@ items:
         config = load_watchlist(str(watchlist_path))
         assert config is None
 
+    def test_load_watchlist_with_invalid_target_price(self, tmp_path: Path):
+        """Should return None when target_price is not numeric."""
+        watchlist_path = tmp_path / "watchlist.yaml"
+        watchlist_path.write_text(
+            """
+items:
+  - name: "Bad Item"
+    target_price: nope
+"""
+        )
+
+        config = load_watchlist(str(watchlist_path))
+        assert config is None
+
 
 class TestWatchlistItem:
     """Tests for WatchlistItem dataclass."""
@@ -166,7 +184,6 @@ async def test_process_watchlist_continues_after_single_item_failure(mocker):
             raise RuntimeError("boom")
         return 90.0
 
-    log_alert = mocker.patch("alerts.log_alert_to_file")
     mocker.patch("alerts.fetch_item_price", side_effect=fake_fetch)
 
     results = await process_watchlist(config, max_concurrent=2)
@@ -177,4 +194,88 @@ async def test_process_watchlist_continues_after_single_item_failure(mocker):
     assert by_name["Bad Item"].is_below_target is False
     assert by_name["Good Item"].current_price == 90.0
     assert by_name["Good Item"].is_below_target is True
-    log_alert.assert_called_once_with(by_name["Good Item"])
+
+
+def test_build_webhook_payload_uses_discord_content_field():
+    """Webhook payload should use Discord content field."""
+    result = check_price_alert(
+        WatchlistItem(name="Switch 2", target_price=500.0),
+        current_price=450.0,
+    )
+
+    payload = build_webhook_payload(result)
+
+    assert "content" in payload
+    assert "text" not in payload
+
+
+@pytest.mark.anyio
+async def test_dispatch_alerts_dedupes_until_price_recovers(mocker):
+    """Repeat below-target results should not resend until item recovers."""
+    alert_result = check_price_alert(
+        WatchlistItem(name="Switch 2", target_price=500.0),
+        current_price=450.0,
+    )
+    recovered_result = check_price_alert(alert_result.item, current_price=550.0)
+
+    log_alert = mocker.patch("alerts.log_alert_to_file")
+    send_webhook = mocker.patch("alerts.send_webhook_alert", return_value=True)
+
+    active_alerts = await dispatch_alerts(
+        [alert_result],
+        "https://discord.com/api/webhooks/123/token",
+    )
+    active_alerts = await dispatch_alerts(
+        [alert_result],
+        "https://discord.com/api/webhooks/123/token",
+        active_alerts=active_alerts,
+    )
+    active_alerts = await dispatch_alerts(
+        [recovered_result],
+        "https://discord.com/api/webhooks/123/token",
+        active_alerts=active_alerts,
+    )
+    await dispatch_alerts(
+        [alert_result],
+        "https://discord.com/api/webhooks/123/token",
+        active_alerts=active_alerts,
+    )
+
+    assert log_alert.call_count == 2
+    assert send_webhook.await_count == 2
+
+
+@pytest.mark.anyio
+async def test_run_watch_mode_run_once_stops_after_first_cycle(mocker):
+    """run_once should execute one cycle and exit."""
+    run_cycle = mocker.patch(
+        "alerts.run_watch_cycle",
+        return_value=(None, [], set()),
+    )
+    sleep = mocker.patch("alerts.asyncio.sleep")
+
+    await run_watch_mode("watchlist.yaml", interval_seconds=5.0, run_once=True)
+
+    run_cycle.assert_awaited_once()
+    sleep.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_run_watch_mode_repeats_when_not_run_once(mocker):
+    """Continuous watch mode should loop between sleeps."""
+    state = {"calls": 0}
+
+    async def fake_run_watch_cycle(*args, **kwargs):
+        state["calls"] += 1
+        if state["calls"] >= 2:
+            raise asyncio.CancelledError()
+        return None, [], set()
+
+    sleep = mocker.patch("alerts.asyncio.sleep", return_value=None)
+    mocker.patch("alerts.run_watch_cycle", side_effect=fake_run_watch_cycle)
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_watch_mode("watchlist.yaml", interval_seconds=5.0, run_once=False)
+
+    assert state["calls"] == 2
+    sleep.assert_awaited_once_with(5.0)

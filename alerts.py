@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 # Alerts log file
 ALERTS_LOG_PATH = Path("alerts.log")
+AlertKey = tuple[str, bool, float]
 
 
 @dataclass
@@ -65,7 +66,7 @@ def load_watchlist(path: str = "watchlist.yaml") -> Optional[WatchlistConfig]:
         WatchlistConfig if successful, None otherwise
     """
     try:
-        with open(path) as f:
+        with Path(path).open(encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
         if data is None:
@@ -74,24 +75,59 @@ def load_watchlist(path: str = "watchlist.yaml") -> Optional[WatchlistConfig]:
         if not isinstance(data, dict):
             logger.error("Watchlist must contain a YAML mapping at top level")
             return None
+        if "items" not in data:
+            logger.error("Watchlist must define an items list")
+            return None
+        if not isinstance(data["items"], list):
+            logger.error("Watchlist items must be a list")
+            return None
 
-        items = [
-            WatchlistItem(
-                name=item["name"],
-                target_price=float(item["target_price"]),
-                check_sold=item.get("check_sold", False),
+        items: list[WatchlistItem] = []
+        for index, item in enumerate(data["items"], start=1):
+            if not isinstance(item, dict):
+                logger.error(f"Watchlist item #{index} must be a mapping")
+                return None
+
+            name = item.get("name")
+            if not isinstance(name, str) or not name.strip():
+                logger.error(f"Watchlist item #{index} must have non-empty name")
+                return None
+
+            try:
+                target_price = float(item["target_price"])
+            except KeyError:
+                logger.error(f"Watchlist item #{index} is missing target_price")
+                return None
+            except (TypeError, ValueError):
+                logger.error(f"Watchlist item #{index} has invalid target_price")
+                return None
+
+            check_sold = item.get("check_sold", False)
+            if not isinstance(check_sold, bool):
+                logger.error(f"Watchlist item #{index} has invalid check_sold value")
+                return None
+
+            items.append(
+                WatchlistItem(
+                    name=name.strip(),
+                    target_price=target_price,
+                    check_sold=check_sold,
+                )
             )
-            for item in data.get("items", [])
-        ]
+
+        webhook_url = data.get("webhook_url")
+        if webhook_url is not None and not isinstance(webhook_url, str):
+            logger.error("webhook_url must be a string")
+            return None
 
         return WatchlistConfig(
-            webhook_url=data.get("webhook_url"),
+            webhook_url=webhook_url,
             items=items,
         )
     except FileNotFoundError:
         logger.error(f"Watchlist file not found: {path}")
         return None
-    except (yaml.YAMLError, KeyError, TypeError) as e:
+    except yaml.YAMLError as e:
         logger.error(f"Failed to parse watchlist: {e}")
         return None
 
@@ -160,28 +196,54 @@ def log_alert_to_file(result: PriceResult) -> None:
         result: PriceResult that triggered the alert
     """
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    link = generate_ebay_search_link(result.item.name, sold_only=result.item.check_sold)
-    message = (
-        f"[{timestamp}] PRICE ALERT: {result.item.name} "
-        f"average price is ${result.current_price:.2f} "
-        f"(${abs(result.price_difference):.2f} below target of ${result.item.target_price:.2f})\n"
-        f"    Link: {link}"
-    )
+    message = f"[{timestamp}] {build_plain_alert_message(result)}"
 
     # Log to console
     logger.info(f"🔔 {message}")
 
     # Append to log file
     try:
-        with open(ALERTS_LOG_PATH, "a") as f:
+        with ALERTS_LOG_PATH.open("a", encoding="utf-8") as f:
             f.write(message + "\n")
     except IOError as e:
         logger.error(f"Failed to write to alerts log: {e}")
 
 
+def get_alert_key(item: WatchlistItem) -> AlertKey:
+    """Builds stable key for duplicate alert suppression."""
+    return (item.name.casefold(), item.check_sold, item.target_price)
+
+
+def build_plain_alert_message(result: PriceResult) -> str:
+    """Builds plain-text alert body."""
+    link = generate_ebay_search_link(result.item.name, sold_only=result.item.check_sold)
+    return (
+        f"PRICE ALERT: {result.item.name} average price is "
+        f"${result.current_price:.2f} "
+        f"(${abs(result.price_difference):.2f} below target of "
+        f"${result.item.target_price:.2f})\n"
+        f"    Link: {link}"
+    )
+
+
+def build_webhook_payload(result: PriceResult) -> dict[str, str]:
+    """Builds Discord webhook payload."""
+    link = generate_ebay_search_link(result.item.name, sold_only=result.item.check_sold)
+    return {
+        "content": (
+            f"🔔 **Price Alert!**\n"
+            f"**{result.item.name}** average price is now "
+            f"**${result.current_price:.2f}**\n"
+            f"That's ${abs(result.price_difference):.2f} below your target of "
+            f"${result.item.target_price:.2f}!\n"
+            f"[View on eBay]({link})"
+        )
+    }
+
+
 async def send_webhook_alert(result: PriceResult, webhook_url: str) -> bool:
     """
-    Sends an alert to a webhook URL (Discord, Slack, etc.).
+    Sends an alert to Discord webhook URL.
 
     Args:
         result: PriceResult that triggered the alert
@@ -190,15 +252,7 @@ async def send_webhook_alert(result: PriceResult, webhook_url: str) -> bool:
     Returns:
         True if webhook was sent successfully
     """
-    link = generate_ebay_search_link(result.item.name, sold_only=result.item.check_sold)
-    payload = {
-        "content": (
-            f"🔔 **Price Alert!**\n"
-            f"**{result.item.name}** average price is now **${result.current_price:.2f}**\n"
-            f"That's ${abs(result.price_difference):.2f} below your target of ${result.item.target_price:.2f}!\n"
-            f"[View on eBay]({link})"
-        )
-    }
+    payload = build_webhook_payload(result)
 
     try:
         async with httpx.AsyncClient() as client:
@@ -250,19 +304,75 @@ async def process_watchlist(
     semaphore = asyncio.Semaphore(max_concurrent)
 
     tasks = [check_item_with_semaphore(item, semaphore) for item in config.items]
-    results = await asyncio.gather(*tasks)
+    return await asyncio.gather(*tasks)
 
-    # Send notifications for items below target
+
+async def dispatch_alerts(
+    results: list[PriceResult],
+    webhook_url: Optional[str],
+    active_alerts: Optional[set[AlertKey]] = None,
+) -> set[AlertKey]:
+    """Sends alerts once per active below-target item until it recovers."""
+    if active_alerts is None:
+        active_alerts = set()
+
+    current_keys = {get_alert_key(result.item) for result in results}
+    active_alerts.intersection_update(current_keys)
+
     for result in results:
-        if result.is_below_target:
-            log_alert_to_file(result)
-            if config.webhook_url:
-                await send_webhook_alert(result, config.webhook_url)
+        key = get_alert_key(result.item)
 
-    return results
+        if not result.is_below_target or result.current_price is None:
+            active_alerts.discard(key)
+            continue
+
+        if key in active_alerts:
+            logger.info(f"Skipping duplicate active alert for {result.item.name}")
+            continue
+
+        log_alert_to_file(result)
+        if webhook_url:
+            await send_webhook_alert(result, webhook_url)
+        active_alerts.add(key)
+
+    return active_alerts
 
 
-async def run_watch_mode(watchlist_path: str = "watchlist.yaml") -> None:
+async def run_watch_cycle(
+    watchlist_path: str = "watchlist.yaml",
+    active_alerts: Optional[set[AlertKey]] = None,
+    max_concurrent: int = 3,
+) -> tuple[Optional[WatchlistConfig], list[PriceResult], set[AlertKey]]:
+    """Runs one watchlist check and dispatches any fresh alerts."""
+    config = load_watchlist(watchlist_path)
+    if not config:
+        return None, [], active_alerts or set()
+
+    if not config.items:
+        logger.warning("No items in watchlist")
+        return config, [], active_alerts or set()
+
+    logger.info(f"Checking {len(config.items)} items...")
+    results = await process_watchlist(config, max_concurrent=max_concurrent)
+    updated_alerts = await dispatch_alerts(
+        results,
+        config.webhook_url,
+        active_alerts=active_alerts,
+    )
+
+    alerts_triggered = sum(1 for r in results if r.is_below_target)
+    failed_checks = sum(1 for r in results if r.current_price is None)
+    logger.info(
+        f"Done! {alerts_triggered} items below target, {failed_checks} checks failed"
+    )
+    return config, results, updated_alerts
+
+
+async def run_watch_mode(
+    watchlist_path: str = "watchlist.yaml",
+    interval_seconds: float = 300.0,
+    run_once: bool = False,
+) -> None:
     """
     Main entry point for watch mode.
 
@@ -270,22 +380,18 @@ async def run_watch_mode(watchlist_path: str = "watchlist.yaml") -> None:
 
     Args:
         watchlist_path: Path to watchlist YAML file
+        interval_seconds: Seconds between checks
+        run_once: Exit after one pass instead of watching continuously
     """
-    config = load_watchlist(watchlist_path)
-    if not config:
-        return
+    active_alerts: set[AlertKey] = set()
 
-    if not config.items:
-        logger.warning("No items in watchlist")
-        return
+    while True:
+        _, _, active_alerts = await run_watch_cycle(
+            watchlist_path,
+            active_alerts=active_alerts,
+        )
+        if run_once:
+            return
 
-    logger.info(f"Checking {len(config.items)} items...")
-    results = await process_watchlist(config)
-
-    # Summary
-    alerts_triggered = sum(1 for r in results if r.is_below_target)
-    failed_checks = sum(1 for r in results if r.current_price is None)
-
-    logger.info(
-        f"Done! {alerts_triggered} alerts triggered, {failed_checks} checks failed"
-    )
+        logger.info(f"Sleeping for {interval_seconds:.0f}s before next check")
+        await asyncio.sleep(interval_seconds)
