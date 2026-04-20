@@ -1,161 +1,211 @@
 # eBay Price Tracker
 
-A Python tool that monitors eBay prices and sends alerts when items drop below your target price. Features automatic retry logic, concurrent processing, and Discord webhook notifications.
+Track eBay search prices, save local history, and run continuous price alerts from a watchlist.
 
-## Features
+This project uses Playwright to load eBay search pages, extracts listing prices, removes outliers, calculates averages, and can send Discord alerts when an item drops to or below a target price.
 
-- **Price Tracking** - Scrapes eBay search results and calculates average prices (with outlier removal)
-- **Price Alerts** - Get notified when items drop below your target price
-- **Webhook Notifications** - Send alerts to Discord webhooks
-- **Retry Logic** - Automatic retry with exponential backoff for reliable scraping
-- **Async Processing** - Check multiple items concurrently (up to 3 at a time)
+## What It Does
 
-## Installation
+- Check one item from search terms or an eBay search URL
+- Calculate average listed price
+- Calculate average sold price when sold results exist
+- Save single-item runs to `prices.csv`
+- Monitor many items from `watchlist.yaml`
+- Send Discord webhook alerts for below-target items
+- Avoid duplicate alerts until an item rises back above target
+- Retry transient page-load failures with exponential backoff
+- Process watchlist items concurrently
 
-1. **Install uv** (if not already installed):
-   ```bash
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-   ```
+## Quick Start
 
-2. **Install dependencies**:
-   ```bash
-   uv sync
-   ```
-
-3. **Install browser** (Playwright uses Chromium to bypass bot protection):
-   ```bash
-   uv run playwright install chromium
-   ```
-
-## Usage
-
-### Single Item Mode
-
-Check the price of a single item:
+### 1. Install dependencies
 
 ```bash
-uv run main.py "nintendo switch 2"
+uv sync
+uv run playwright install chromium
 ```
 
-<img width="948" alt="Screenshot 2025-04-24 at 8 05 29 PM" src="https://github.com/user-attachments/assets/9425b8d9-0d4f-4c45-8224-854a882aa8d4" />
+### 2. Run single-item mode
 
-Or run without arguments to enter a URL manually:
+Search by item name:
 
 ```bash
-uv run main.py
+uv run python main.py "Steam Deck OLED 1TB"
 ```
 
-<img width="948" alt="Screenshot 2025-04-12 at 6 40 08 PM" src="https://github.com/user-attachments/assets/04169a9c-4a68-4324-a917-aeec97598cbe" />
-
-Results are saved to `prices.csv`:
-
-<img width="1043" alt="Screenshot 2025-04-13 at 12 09 57 PM" src="https://github.com/user-attachments/assets/536a602a-c63c-4260-8bc7-de9ea572fe52" />
-
-### Watch Mode (Price Alerts)
-
-Monitor multiple items and get notified when prices drop below your targets. By default, watch mode keeps running and checks every 5 minutes until you stop it.
+Or paste an eBay search URL:
 
 ```bash
-uv run main.py --watch
+uv run python main.py
 ```
 
-Use a custom interval:
+### 3. Run watch mode
 
 ```bash
-uv run main.py --watch --watch-interval 120
+uv run python main.py --watch
 ```
 
-Run one pass without staying in watch loop:
+By default, watch mode runs forever and checks every 300 seconds.
+
+## Modes
+
+### Single-item mode
+
+Single-item mode:
+
+- Accepts search terms or an eBay search URL
+- Fetches listed prices from provided or generated search page
+- Fetches sold prices from a generated sold-results search
+- Prints listed and sold averages to terminal
+- Appends one row to `prices.csv`
+
+Example:
 
 ```bash
-uv run main.py --watch --watch-once
+uv run python main.py "Fujifilm X100V Black"
 ```
 
-#### Setting Up Your Watchlist
+### Watch mode
 
-Create a `watchlist.yaml` file:
+Watch mode:
+
+- Loads items from `watchlist.yaml`
+- Checks each item against `target_price`
+- Uses sold listings when `check_sold: true`
+- Logs triggered alerts to `alerts.log`
+- Optionally posts alerts to a Discord webhook
+- Suppresses repeat alerts while an item remains below target
+
+Examples:
+
+```bash
+uv run python main.py --watch
+uv run python main.py --watch --watch-interval 120
+uv run python main.py --watch --watch-once
+uv run python main.py --watch --watchlist my_items.yaml
+```
+
+## Watchlist Format
+
+Create `watchlist.yaml` in project root:
 
 ```yaml
-# Optional: Discord webhook for notifications
+# Optional: Discord webhook URL
 webhook_url: "https://discord.com/api/webhooks/your-webhook-id/your-token"
 
 items:
-  - name: "Nintendo Switch 2"
-    target_price: 400.00
+  - name: "Steam Deck OLED 1TB"
+    target_price: 750.00
+    check_sold: true
 
-  - name: "RTX 5090"
-    target_price: 1800.00
-    check_sold: true  # Monitor sold prices instead of listings
+  - name: "Apple MacBook Air 13.6 A2681 M2 16GB 512GB"
+    target_price: 780.00
+    check_sold: true
+
+  - name: "Fujifilm X100V Black"
+    target_price: 2100.00
+    check_sold: true
 ```
 
-#### Setting Up Discord Webhooks
+Rules:
 
-1. Open Discord and go to your server
-2. Right-click on a channel → **Edit Channel**
-3. Go to **Integrations** → **Webhooks** → **New Webhook**
-4. Copy the webhook URL and paste it in `watchlist.yaml`
+- `items` must be present and must be a list
+- Each item must have non-empty `name`
+- Each item must have numeric `target_price`
+- `check_sold` is optional and defaults to `false`
+- `webhook_url` is optional
 
-When an item drops below your target, you'll receive an alert:
+## Discord Alerts
 
-**Discord notification:**
-> 🔔 **Price Alert!**
-> **Nintendo Switch 2** average price is now **$389.99**
-> That's $10.01 below your target of $400.00!
-> [View on eBay](https://www.ebay.com/sch/i.html?_nkw=Nintendo+Switch+2)
+To create Discord webhook:
 
-Alerts are also logged to `alerts.log` for local tracking.
+1. Open Discord server settings for channel you want.
+2. Go to `Integrations`.
+3. Create webhook.
+4. Paste URL into `watchlist.yaml`.
 
-#### Custom Watchlist Path
+Alert payload looks like:
 
-```bash
-uv run main.py --watch --watchlist my_items.yaml
+```text
+🔔 Price Alert!
+Steam Deck OLED 1TB average price is now $742.50
+That's $7.50 below your target of $750.00!
+View on eBay: https://www.ebay.com/...
 ```
+
+## CLI Reference
+
+| Option | Meaning |
+| --- | --- |
+| `<item>` | Item name to search, like `"Sony WH-1000XM5 Black"` |
+| `--watch`, `-w` | Run continuous watch mode |
+| `--watchlist` | Path to watchlist YAML file. Default: `watchlist.yaml` |
+| `--watch-interval` | Seconds between watch checks. Default: `300` |
+| `--watch-once` | Run one watch cycle, then exit |
 
 ## How It Works
 
-1. **Scraping** - Uses Playwright (headless Chromium) to load eBay pages and bypass bot protection
-2. **Price Extraction** - Parses search results and extracts prices from listings
-3. **Outlier Removal** - Uses Z-score method to filter out anomalous prices
-4. **Average Calculation** - Computes the mean of remaining prices
-5. **Retry Logic** - Automatically retries failed requests with exponential backoff (2s → 4s → 8s)
+1. Generate or validate eBay search URL.
+2. Load page with Playwright Chromium.
+3. Parse prices from search results HTML.
+4. Filter outliers with a Z-score rule.
+5. Compute averages with NumPy.
+6. Save results or send alerts depending on mode.
 
-## CLI Options
+Implementation details:
 
-| Option | Description |
-|--------|-------------|
-| `<item>` | Item name to search (e.g., `"playstation 5"`) |
-| `--watch`, `-w` | Run continuous watch mode until stopped |
-| `--watchlist` | Path to watchlist YAML file (default: `watchlist.yaml`) |
-| `--watch-interval` | Seconds between checks in watch mode (default: `300`) |
-| `--watch-once` | Check watchlist once and exit |
+- URL validation only accepts known eBay hostnames
+- Fetch retry uses exponential backoff
+- Watchlist processing uses async tasks with concurrency limit `3`
+- Sold-price checks use eBay sold/complete-results search parameters
 
-## Project Structure
+## Files Created
 
+| File | Purpose |
+| --- | --- |
+| `prices.csv` | History from single-item runs |
+| `alerts.log` | Local log of triggered alerts |
+| `watchlist.yaml` | User-defined watched items |
+
+## Project Layout
+
+```text
+.
+├── main.py
+├── alerts.py
+├── utils.py
+├── watchlist.example.yaml
+├── tests/
+├── prices.csv
+└── alerts.log
 ```
-ebay_tracker/
-├── main.py           # CLI entry point
-├── utils.py          # Core scraping and price utilities
-├── alerts.py         # Alert system and notifications
-├── watchlist.yaml    # Your items to monitor
-├── prices.csv        # Historical price data
-├── alerts.log        # Alert history
-└── tests/            # Test suite
-```
+
+## Limitations
+
+- Built around eBay search-result pages, not direct item pages
+- Parsing depends on eBay HTML structure and may need updates if site changes
+- Average price is heuristic, not market appraisal
+- Outlier removal is lightweight and may not fit every niche market
+- Watch mode keeps state in memory, so duplicate-alert suppression resets on restart
 
 ## Development
 
-Run tests:
+Install project plus dev tools:
+
 ```bash
-uv run pytest -v
+uv sync
 ```
 
-Lint and format:
+Run checks:
+
 ```bash
+uv run pytest
 uv run ruff check .
 uv run ruff format .
-```
-
-Type checking:
-```bash
 uv run pyright
 ```
+
+## Notes
+
+- Example watchlist lives in [watchlist.example.yaml](/Users/julius/Dev/ebay_tracker/watchlist.example.yaml)
+- Main CLI entry is [main.py](/Users/julius/Dev/ebay_tracker/main.py)
