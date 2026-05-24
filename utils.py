@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 from bs4 import BeautifulSoup
+import httpx
 from playwright.async_api import (
     async_playwright,
     TimeoutError as AsyncPlaywrightTimeoutError,
@@ -23,7 +24,10 @@ from tenacity import (
     wait_exponential,
 )
 
+from ebay_api import get_prices_from_ebay_api, get_prices_from_ebay_api_async
+
 logger = logging.getLogger(__name__)
+ACCESS_DENIED_STATUSES = {403, 429}
 ALLOWED_EBAY_DOMAINS = {
     "ebay.com",
     "ebay.ca",
@@ -45,6 +49,23 @@ ALLOWED_EBAY_DOMAINS = {
     "ebay.ph",
     "ebay.co.jp",
 }
+
+
+class EbayAccessDeniedError(RuntimeError):
+    """Raised when eBay blocks the request before returning search results."""
+
+
+def is_ebay_access_denied(content: str, status_code: Optional[int] = None) -> bool:
+    """Return whether eBay returned an access-denied page."""
+    if status_code in ACCESS_DENIED_STATUSES:
+        return True
+
+    normalized_content = content.casefold()
+    return (
+        "access denied" in normalized_content
+        and "permission to access" in normalized_content
+        and "ebay" in normalized_content
+    )
 
 
 def parse_arguments_and_generate_link(
@@ -155,12 +176,24 @@ def _fetch_page_content_with_retry(link: str) -> str:
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
             page = context.new_page()
-            page.goto(link, timeout=30000)
+            response = page.goto(link, timeout=30000)
+            status_code = response.status if response else None
+
+            if status_code in ACCESS_DENIED_STATUSES:
+                content = page.content()
+                if is_ebay_access_denied(content, status_code):
+                    raise EbayAccessDeniedError(
+                        f"eBay returned HTTP {status_code} Access Denied"
+                    )
 
             # Wait for search results to load
             page.wait_for_selector("ul.srp-results", timeout=15000)
 
-            return page.content()
+            content = page.content()
+            if is_ebay_access_denied(content, status_code):
+                raise EbayAccessDeniedError("eBay returned an Access Denied page")
+
+            return content
         finally:
             browser.close()
 
@@ -184,6 +217,12 @@ def fetch_page_content(link: str) -> Optional[str]:
         content = _fetch_page_content_with_retry(link)
         _page_cache[link] = content
         return content
+    except EbayAccessDeniedError as e:
+        logger.error(
+            "%s. eBay is blocking this automated Playwright request; use the official eBay API, a permitted proxy, or a real browser session.",
+            e,
+        )
+        return None
     except PlaywrightTimeoutError:
         logger.error("Timeout waiting for eBay page to load after 3 attempts")
         return None
@@ -272,6 +311,29 @@ def get_prices_by_link(link: str, sold_only: bool = False) -> List[float]:
     Returns:
         List[float]: List of valid prices found
     """
+    item_name = extract_item_name(link)
+    if item_name:
+        try:
+            api_prices = get_prices_from_ebay_api(item_name, sold_only=sold_only)
+            if api_prices is not None:
+                return api_prices
+        except httpx.HTTPStatusError as e:
+            if sold_only and e.response.status_code == 403:
+                logger.warning(
+                    "Sold/completed prices are unavailable because Marketplace Insights access is not enabled."
+                )
+                return []
+
+            logger.error(
+                "eBay API request failed with HTTP %s: %s",
+                e.response.status_code,
+                e.response.text,
+            )
+            return []
+        except httpx.HTTPError as e:
+            logger.error(f"eBay API request failed: {e}")
+            return []
+
     content = fetch_page_content(link)
     if not content:
         return []
@@ -494,6 +556,32 @@ async def get_prices_by_link_async(link: str, sold_only: bool = False) -> List[f
     Returns:
         List[float]: List of valid prices found
     """
+    item_name = extract_item_name(link)
+    if item_name:
+        try:
+            api_prices = await get_prices_from_ebay_api_async(
+                item_name,
+                sold_only=sold_only,
+            )
+            if api_prices is not None:
+                return api_prices
+        except httpx.HTTPStatusError as e:
+            if sold_only and e.response.status_code == 403:
+                logger.warning(
+                    "Sold/completed prices are unavailable because Marketplace Insights access is not enabled."
+                )
+                return []
+
+            logger.error(
+                "eBay API request failed with HTTP %s: %s",
+                e.response.status_code,
+                e.response.text,
+            )
+            return []
+        except httpx.HTTPError as e:
+            logger.error(f"eBay API request failed: {e}")
+            return []
+
     content = await fetch_page_content_async(link)
     if not content:
         return []

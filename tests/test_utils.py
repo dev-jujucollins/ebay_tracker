@@ -1,10 +1,12 @@
 # Pytests
 import numpy as np
+import httpx
 import pytest
 
 from main import process_item
 from utils import (
     get_prices_by_link,
+    is_ebay_access_denied,
     parse_price,
     parse_prices_from_html,
     remove_outliers,
@@ -41,6 +43,27 @@ def test_parse_price_invalid():
 )
 def test_validate_url(url, expected):
     assert validate_url(url) == expected
+
+
+def test_is_ebay_access_denied_detects_block_status():
+    assert is_ebay_access_denied("", 403) is True
+
+
+def test_is_ebay_access_denied_detects_block_page():
+    content = """
+    <html>
+        <title>Access Denied</title>
+        You don't have permission to access "http://www.ebay.com/sch/i.html?"
+    </html>
+    """
+
+    assert is_ebay_access_denied(content) is True
+
+
+def test_is_ebay_access_denied_ignores_normal_page():
+    content = '<ul class="srp-results"><li class="s-item">Item</li></ul>'
+
+    assert is_ebay_access_denied(content, 200) is False
 
 
 # Outlier Removal (remove_outliers)
@@ -87,6 +110,28 @@ def test_get_prices_by_link_parses_html(mocker):
     prices = get_prices_by_link("https://ebay.com/fake")
     assert 50.0 in prices
     assert 75.0 in prices
+
+
+def test_get_prices_by_link_treats_sold_api_403_as_optional(mocker):
+    response = httpx.Response(
+        403,
+        request=httpx.Request("GET", "https://api.ebay.com/test"),
+        text="Forbidden",
+    )
+    mocker.patch(
+        "utils.get_prices_from_ebay_api",
+        side_effect=httpx.HTTPStatusError(
+            "forbidden",
+            request=response.request,
+            response=response,
+        ),
+    )
+    fetch_page_content = mocker.patch("utils.fetch_page_content")
+
+    prices = get_prices_by_link("https://ebay.com/sch/i.html?_nkw=test", sold_only=True)
+
+    assert prices == []
+    fetch_page_content.assert_not_called()
 
 
 def test_parse_prices_from_html_sold_only():

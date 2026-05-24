@@ -56,7 +56,6 @@ def process_item(
     sold_link = generate_ebay_search_link(item_name, sold_only=True)
     sold_prices = get_prices_by_link(sold_link, sold_only=True)
     if not sold_prices:
-        logging.warning("No sold prices found for the item.")
         sold_prices_without_outliers = np.array([])
     else:
         sold_prices_without_outliers = remove_outliers(sold_prices)
@@ -102,8 +101,6 @@ def run_single_item(item_name: Optional[str] = None) -> None:
     print(f"Average listed price: ${np.around(listed_avg, 2)}")
     if sold_avg is not None:
         print(f"Average sold price: ${np.around(sold_avg, 2)}")
-    else:
-        print("No valid sold prices found.")
 
     save_to_file(listed_prices, sold_prices, item_name)
 
@@ -140,6 +137,7 @@ def main() -> None:
         format="\033[91m%(asctime)s\033[0m - \033[92m%(levelname)s\033[0m - \033[96m%(message)s\033[0m",
         datefmt="%H:%M:%S",
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
     parser = argparse.ArgumentParser(
         description="eBay Price Tracker - Monitor prices and get alerts"
