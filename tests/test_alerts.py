@@ -3,6 +3,7 @@
 import asyncio
 from pathlib import Path
 
+import main
 import pytest
 
 from alerts import (
@@ -279,3 +280,19 @@ async def test_run_watch_mode_repeats_when_not_run_once(mocker):
 
     assert state["calls"] == 2
     sleep.assert_awaited_once_with(5.0)
+
+
+def test_cli_watch_mode_handles_keyboard_interrupt(mocker):
+    """CLI watch wrapper should exit cleanly on Ctrl-C."""
+
+    def raise_keyboard_interrupt(coro):
+        coro.close()
+        raise KeyboardInterrupt
+
+    asyncio_run = mocker.patch("main.asyncio.run", side_effect=raise_keyboard_interrupt)
+    log_info = mocker.patch("main.logging.info")
+
+    main.run_watch_mode("watchlist.yaml", interval_seconds=5.0, run_once=False)
+
+    asyncio_run.assert_called_once()
+    log_info.assert_called_once_with("Watch mode stopped")

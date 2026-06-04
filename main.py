@@ -121,13 +121,16 @@ def run_watch_mode(
     """Run watch mode to monitor watchlist for price alerts."""
     from alerts import run_watch_mode as async_watch
 
-    asyncio.run(
-        async_watch(
-            watchlist_path,
-            interval_seconds=interval_seconds,
-            run_once=run_once,
+    try:
+        asyncio.run(
+            async_watch(
+                watchlist_path,
+                interval_seconds=interval_seconds,
+                run_once=run_once,
+            )
         )
-    )
+    except KeyboardInterrupt:
+        logging.info("Watch mode stopped")
 
 
 def main() -> None:
