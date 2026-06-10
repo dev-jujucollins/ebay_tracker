@@ -1,12 +1,10 @@
 import asyncio
 import csv
 import logging
-from pathlib import Path
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from typing import List, Optional, Tuple, Union
+from pathlib import Path
 from urllib.parse import parse_qs, quote_plus, urlparse
 
 import numpy as np
@@ -56,7 +54,7 @@ class EbayAccessDeniedError(RuntimeError):
     """Raised when eBay blocks the request before returning search results."""
 
 
-def is_ebay_access_denied(content: str, status_code: Optional[int] = None) -> bool:
+def is_ebay_access_denied(content: str, status_code: int | None = None) -> bool:
     """Return whether eBay returned an access-denied page."""
     if status_code in ACCESS_DENIED_STATUSES:
         return True
@@ -67,26 +65,6 @@ def is_ebay_access_denied(content: str, status_code: Optional[int] = None) -> bo
         and "permission to access" in normalized_content
         and "ebay" in normalized_content
     )
-
-
-def parse_arguments_and_generate_link(
-    args: List[str],
-) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Parses command line arguments and generate an eBay search link.
-
-    Args:
-        args: List of command line arguments
-
-    Returns:
-        Tuple of (link, item_name) or (None, None) if no arguments provided
-    """
-    if len(args) > 1:
-        item_name = " ".join(args[1:])
-        link = generate_ebay_search_link(item_name)
-        logger.info(f"Generated eBay search link: {link}")
-        return link, item_name
-    return None, None
 
 
 def validate_url(link: str) -> bool:
@@ -122,7 +100,7 @@ def validate_url(link: str) -> bool:
     return True
 
 
-def get_item_name(link: str, item_name: Optional[str] = None) -> Optional[str]:
+def get_item_name(link: str, item_name: str | None = None) -> str | None:
     """
     Extracts the item name from the link or use the provided argument.
 
@@ -150,7 +128,7 @@ _PageCache = dict[str, tuple[float, str]]
 _page_cache: _PageCache = {}
 
 
-def _cache_get(cache: _PageCache, link: str) -> Optional[str]:
+def _cache_get(cache: _PageCache, link: str) -> str | None:
     """Return cached page content for the link, or None if missing/expired."""
     entry = cache.get(link)
     if entry is None:
@@ -219,7 +197,7 @@ def _fetch_page_content_with_retry(link: str) -> str:
             browser.close()
 
 
-def fetch_page_content(link: str) -> Optional[str]:
+def fetch_page_content(link: str) -> str | None:
     """
     Fetches page content using Playwright to bypass bot protection.
 
@@ -253,7 +231,7 @@ def fetch_page_content(link: str) -> Optional[str]:
         return None
 
 
-def parse_price(price_text: str) -> Optional[float]:
+def parse_price(price_text: str) -> float | None:
     """
     Parses price text into a float value.
 
@@ -292,7 +270,7 @@ def parse_price(price_text: str) -> Optional[float]:
         return None
 
 
-def parse_prices_from_html(content: str, sold_only: bool = False) -> List[float]:
+def parse_prices_from_html(content: str, sold_only: bool = False) -> list[float]:
     """
     Parses prices from eBay search HTML content.
 
@@ -314,7 +292,7 @@ def parse_prices_from_html(content: str, sold_only: bool = False) -> List[float]
     if not items:
         items = search_results.find_all("li", {"class": "s-item"})
 
-    def process_result(result) -> Optional[float]:
+    def process_result(result) -> float | None:
         # Try new price class first, then fall back to old
         price_tag = result.find("span", {"class": "s-card__price"})
         if not price_tag:
@@ -335,17 +313,20 @@ def parse_prices_from_html(content: str, sold_only: bool = False) -> List[float]
 
         return parse_price(price_tag.text)
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        prices = list(filter(None, executor.map(process_result, items)))
+    prices = [
+        price
+        for price in (process_result(item) for item in items)
+        if price is not None
+    ]
 
     if not prices:
         logger.warning("No valid prices found.")
     return prices
 
 
-def get_prices_by_link(link: str, sold_only: bool = False) -> List[float]:
+def get_prices_by_link(link: str, sold_only: bool = False) -> list[float]:
     """
-    Gets prices from eBay search link using parallel processing.
+    Gets prices from eBay search link.
 
     Args:
         link: eBay search URL
@@ -385,7 +366,7 @@ def get_prices_by_link(link: str, sold_only: bool = False) -> List[float]:
 
 
 def remove_outliers(
-    prices: Union[List[float], np.ndarray], m: float = 2.0
+    prices: list[float] | np.ndarray, m: float = 2.0
 ) -> np.ndarray:
     """
     Removes outlier prices using the Z-score method.
@@ -417,7 +398,7 @@ def remove_outliers(
     return data[z_scores < m]
 
 
-def get_average(prices: Union[List[float], np.ndarray]) -> Optional[float]:
+def get_average(prices: list[float] | np.ndarray) -> float | None:
     """
     Calculates the average price.
 
@@ -507,7 +488,7 @@ def generate_ebay_search_link(item_name: str, sold_only: bool = False) -> str:
     return base_url + query
 
 
-def extract_item_name(link: str) -> Optional[str]:
+def extract_item_name(link: str) -> str | None:
     """
     Extracts item name from eBay search URL.
 
@@ -535,7 +516,7 @@ def extract_item_name(link: str) -> Optional[str]:
 _async_page_cache: _PageCache = {}
 
 
-async def fetch_page_content_async(link: str) -> Optional[str]:
+async def fetch_page_content_async(link: str) -> str | None:
     """
     Async version of fetch_page_content using Playwright.
 
@@ -590,7 +571,7 @@ async def fetch_page_content_async(link: str) -> Optional[str]:
     return None
 
 
-async def get_prices_by_link_async(link: str, sold_only: bool = False) -> List[float]:
+async def get_prices_by_link_async(link: str, sold_only: bool = False) -> list[float]:
     """
     Async version of get_prices_by_link.
 

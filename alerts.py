@@ -9,7 +9,6 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import httpx
 import yaml
@@ -42,7 +41,7 @@ class PriceResult:
     """Result of a price check for an item."""
 
     item: WatchlistItem
-    current_price: Optional[float]
+    current_price: float | None
     is_below_target: bool
     price_difference: float  # Negative means below target
 
@@ -51,11 +50,11 @@ class PriceResult:
 class WatchlistConfig:
     """Configuration loaded from watchlist.yaml."""
 
-    webhook_url: Optional[str]
+    webhook_url: str | None
     items: list[WatchlistItem]
 
 
-def load_watchlist(path: str = "watchlist.yaml") -> Optional[WatchlistConfig]:
+def load_watchlist(path: str = "watchlist.yaml") -> WatchlistConfig | None:
     """
     Loads watchlist configuration from YAML file.
 
@@ -132,7 +131,7 @@ def load_watchlist(path: str = "watchlist.yaml") -> Optional[WatchlistConfig]:
         return None
 
 
-async def fetch_item_price(item: WatchlistItem) -> Optional[float]:
+async def fetch_item_price(item: WatchlistItem) -> float | None:
     """
     Fetches the current average price for an item.
 
@@ -153,7 +152,7 @@ async def fetch_item_price(item: WatchlistItem) -> Optional[float]:
 
 
 def check_price_alert(
-    item: WatchlistItem, current_price: Optional[float]
+    item: WatchlistItem, current_price: float | None
 ) -> PriceResult:
     """
     Determines if an alert should be triggered for this item.
@@ -309,8 +308,8 @@ async def process_watchlist(
 
 async def dispatch_alerts(
     results: list[PriceResult],
-    webhook_url: Optional[str],
-    active_alerts: Optional[set[AlertKey]] = None,
+    webhook_url: str | None,
+    active_alerts: set[AlertKey] | None = None,
 ) -> set[AlertKey]:
     """Sends alerts once per active below-target item until it recovers."""
     if active_alerts is None:
@@ -340,9 +339,9 @@ async def dispatch_alerts(
 
 async def run_watch_cycle(
     watchlist_path: str = "watchlist.yaml",
-    active_alerts: Optional[set[AlertKey]] = None,
+    active_alerts: set[AlertKey] | None = None,
     max_concurrent: int = 3,
-) -> tuple[Optional[WatchlistConfig], list[PriceResult], set[AlertKey]]:
+) -> tuple[WatchlistConfig | None, list[PriceResult], set[AlertKey]]:
     """Runs one watchlist check and dispatches any fresh alerts."""
     config = load_watchlist(watchlist_path)
     if not config:

@@ -5,7 +5,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -50,6 +50,8 @@ class EbayToken:
         return time.time() < self.expires_at - _TOKEN_SKEW_SECONDS
 
 
+# Not thread-safe: the sync path runs single-threaded. The async path guards
+# refreshes with _async_token_lock.
 _token_cache: dict[EbayApiConfig, EbayToken] = {}
 _async_token_lock = asyncio.Lock()
 
@@ -76,7 +78,7 @@ def load_env_file(path: Path = Path(".env")) -> dict[str, str]:
     return values
 
 
-def get_ebay_api_config() -> Optional[EbayApiConfig]:
+def get_ebay_api_config() -> EbayApiConfig | None:
     """Load eBay API configuration from .env."""
     values = load_env_file()
     client_id = values.get("EBAY_CLIENT_ID", "").strip()
@@ -97,7 +99,7 @@ def get_ebay_api_config() -> Optional[EbayApiConfig]:
     )
 
 
-def _extract_price_value(money: Any) -> Optional[float]:
+def _extract_price_value(money: Any) -> float | None:
     """Extract a float from an eBay money object."""
     if not isinstance(money, dict):
         return None
@@ -232,7 +234,7 @@ def parse_sold_prices(data: dict[str, Any]) -> list[float]:
 
 def get_prices_from_ebay_api(
     query: str, sold_only: bool = False, limit: int = DEFAULT_LIMIT
-) -> Optional[list[float]]:
+) -> list[float] | None:
     """Fetch prices from eBay REST APIs, if credentials are configured."""
     config = get_ebay_api_config()
     if config is None:
@@ -263,7 +265,7 @@ def get_prices_from_ebay_api(
 
 async def get_prices_from_ebay_api_async(
     query: str, sold_only: bool = False, limit: int = DEFAULT_LIMIT
-) -> Optional[list[float]]:
+) -> list[float] | None:
     """Async version of get_prices_from_ebay_api."""
     config = get_ebay_api_config()
     if config is None:
