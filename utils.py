@@ -3,6 +3,7 @@ import csv
 import logging
 from pathlib import Path
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import List, Optional, Tuple, Union
@@ -143,7 +144,27 @@ def get_item_name(link: str, item_name: Optional[str] = None) -> Optional[str]:
     return item_name
 
 
-_page_cache: dict = {}
+# Cached pages expire so long-lived watch mode sees fresh prices each cycle.
+_PAGE_CACHE_TTL_SECONDS = 300.0
+_PageCache = dict[str, tuple[float, str]]
+_page_cache: _PageCache = {}
+
+
+def _cache_get(cache: _PageCache, link: str) -> Optional[str]:
+    """Return cached page content for the link, or None if missing/expired."""
+    entry = cache.get(link)
+    if entry is None:
+        return None
+    fetched_at, content = entry
+    if time.monotonic() - fetched_at > _PAGE_CACHE_TTL_SECONDS:
+        del cache[link]
+        return None
+    return content
+
+
+def _cache_set(cache: _PageCache, link: str, content: str) -> None:
+    """Store page content for the link with the current timestamp."""
+    cache[link] = (time.monotonic(), content)
 
 
 @retry(
@@ -210,12 +231,13 @@ def fetch_page_content(link: str) -> Optional[str]:
     Returns:
         str: Page content if successful, None otherwise
     """
-    if link in _page_cache:
-        return _page_cache[link]
+    cached = _cache_get(_page_cache, link)
+    if cached is not None:
+        return cached
 
     try:
         content = _fetch_page_content_with_retry(link)
-        _page_cache[link] = content
+        _cache_set(_page_cache, link, content)
         return content
     except EbayAccessDeniedError as e:
         logger.error(
@@ -509,7 +531,7 @@ def extract_item_name(link: str) -> Optional[str]:
 # Async Functions for Concurrent Processing
 # =============================================================================
 
-_async_page_cache: dict = {}
+_async_page_cache: _PageCache = {}
 
 
 async def fetch_page_content_async(link: str) -> Optional[str]:
@@ -524,8 +546,9 @@ async def fetch_page_content_async(link: str) -> Optional[str]:
     Returns:
         str: Page content if successful, None otherwise
     """
-    if link in _async_page_cache:
-        return _async_page_cache[link]
+    cached = _cache_get(_async_page_cache, link)
+    if cached is not None:
+        return cached
 
     attempts = 0
     max_attempts = 3
@@ -544,7 +567,7 @@ async def fetch_page_content_async(link: str) -> Optional[str]:
                     await page.goto(link, timeout=30000)
                     await page.wait_for_selector("ul.srp-results", timeout=15000)
                     content = await page.content()
-                    _async_page_cache[link] = content
+                    _cache_set(_async_page_cache, link, content)
                     return content
                 finally:
                     await browser.close()
