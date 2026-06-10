@@ -7,7 +7,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import List, Optional, Tuple, Union
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote_plus, urlparse
 
 import numpy as np
 from bs4 import BeautifulSoup
@@ -446,7 +446,11 @@ def save_to_file(
     output_path: str = "prices.csv",
 ) -> None:
     """
-    Saves prices to CSV file.
+    Saves average prices to CSV file.
+
+    Prices are averaged as given; filter outliers before calling. Averages are
+    written as plain numbers (empty cell when unavailable) so the CSV stays
+    easy to analyze.
 
     Args:
         listed_prices: Array of listed prices
@@ -458,18 +462,14 @@ def save_to_file(
         logger.warning("No prices to save.")
         return
 
-    listed_avg = (
-        get_average(remove_outliers(listed_prices)) if listed_prices.size > 0 else None
-    )
-    sold_avg = (
-        get_average(remove_outliers(sold_prices)) if sold_prices.size > 0 else None
-    )
+    listed_avg = get_average(listed_prices)
+    sold_avg = get_average(sold_prices)
 
     fields = [
         datetime.today().strftime("%Y-%m-%d"),
         item_name,
-        f"${np.around(listed_avg, 2)}" if listed_avg is not None else "N/A",
-        f"${np.around(sold_avg, 2)}" if sold_avg is not None else "N/A",
+        round(listed_avg, 2) if listed_avg is not None else "",
+        round(sold_avg, 2) if sold_avg is not None else "",
     ]
 
     # Checks if file exists to determine if we need to write headers
@@ -501,7 +501,7 @@ def generate_ebay_search_link(item_name: str, sold_only: bool = False) -> str:
         str: Generated eBay search URL
     """
     base_url = "https://www.ebay.com/sch/i.html"
-    query = f"?_nkw={item_name.replace(' ', '+')}"
+    query = f"?_nkw={quote_plus(item_name)}"
     if sold_only:
         query += "&_sop=13&LH_Sold=1&LH_Complete=1"  # Sort by sold date, show sold items only
     return base_url + query
@@ -518,10 +518,11 @@ def extract_item_name(link: str) -> Optional[str]:
         str: Extracted item name if found, None otherwise
     """
     try:
+        # parse_qs already URL-decodes, including "+" to space
         query_params = parse_qs(urlparse(link).query)
         item_name = query_params.get("_nkw", [None])[0]
         if item_name:
-            return item_name.replace("+", " ")
+            return item_name
     except Exception as e:
         logger.warning(f"Failed to extract item name: {e}")
     return None
