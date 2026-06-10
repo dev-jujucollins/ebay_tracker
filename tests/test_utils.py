@@ -174,13 +174,13 @@ def test_process_item_full_workflow(mocker):
     )
     mocker.patch("main.save_to_file")
 
-    result, _ = process_item("https://ebay.com/test", "test item")
+    result = process_item("https://ebay.com/test", "test item")
     assert result is not None
-    listed_avg, sold_avg, listed_prices, sold_prices = result
-    assert listed_avg is not None
-    assert sold_avg is None
-    assert listed_prices.size > 0
-    assert sold_prices.size == 0
+    assert result.item_name == "test item"
+    assert result.listed_avg == 20.0
+    assert result.sold_avg is None
+    assert result.listed_prices.size > 0
+    assert result.sold_prices.size == 0
 
 
 def test_process_item_uses_sold_search_link(mocker):
@@ -189,7 +189,7 @@ def test_process_item_uses_sold_search_link(mocker):
         side_effect=[[10.0, 20.0, 30.0], [8.0, 9.0, 10.0]],
     )
 
-    result, _ = process_item("https://ebay.com/test", "test item")
+    result = process_item("https://ebay.com/test", "test item")
 
     assert result is not None
     sold_call = mock_get_prices.call_args_list[1]

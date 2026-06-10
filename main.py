@@ -3,10 +3,9 @@ import argparse
 import asyncio
 import logging
 import sys
+from dataclasses import dataclass
 
 import numpy as np
-
-from typing import Optional, Tuple
 
 from utils import (
     get_prices_by_link,
@@ -19,11 +18,18 @@ from utils import (
 )
 
 
-def process_item(
-    link: str, item_name: Optional[str] = None
-) -> Tuple[
-    Optional[Tuple[float, Optional[float], np.ndarray, np.ndarray]], Optional[str]
-]:
+@dataclass
+class ItemPrices:
+    """Average prices and outlier-filtered samples for one eBay item."""
+
+    item_name: str
+    listed_avg: float
+    sold_avg: float | None
+    listed_prices: np.ndarray
+    sold_prices: np.ndarray
+
+
+def process_item(link: str, item_name: str | None = None) -> ItemPrices | None:
     """
     Processes an eBay item to get its average listed and sold prices.
 
@@ -32,25 +38,25 @@ def process_item(
         item_name: Optional pre-provided item name
 
     Returns:
-        Tuple of ((listed_price, sold_price), item_name) or (None, None) if processing fails
+        ItemPrices with outlier-filtered prices, or None if processing fails
     """
     if not validate_url(link):
-        return None, None
+        return None
 
     item_name = get_item_name(link, item_name)
     if not item_name:
-        return None, None
+        return None
 
     # Gets listed prices
     listed_prices = get_prices_by_link(link, sold_only=False)
     if not listed_prices:
         logging.error("No listed prices found for the item.")
-        return None, None
+        return None
 
     listed_prices_without_outliers = remove_outliers(listed_prices)
     if listed_prices_without_outliers.size == 0:
         logging.error("No valid listed prices after removing outliers.")
-        return None, None
+        return None
 
     # Gets sold prices
     sold_link = generate_ebay_search_link(item_name, sold_only=True)
@@ -66,7 +72,7 @@ def process_item(
     listed_avg = get_average(listed_prices_without_outliers)
     if listed_avg is None:
         logging.error("No valid listed prices after removing outliers.")
-        return None, None
+        return None
 
     sold_avg = (
         get_average(sold_prices_without_outliers)
@@ -74,15 +80,16 @@ def process_item(
         else None
     )
 
-    return (
-        listed_avg,
-        sold_avg,
-        listed_prices_without_outliers,
-        sold_prices_without_outliers,
-    ), item_name
+    return ItemPrices(
+        item_name=item_name,
+        listed_avg=listed_avg,
+        sold_avg=sold_avg,
+        listed_prices=listed_prices_without_outliers,
+        sold_prices=sold_prices_without_outliers,
+    )
 
 
-def run_single_item(item_name: Optional[str] = None) -> None:
+def run_single_item(item_name: str | None = None) -> None:
     """Run price check for a single item (original behavior)."""
     if item_name:
         link = generate_ebay_search_link(item_name)
@@ -93,16 +100,15 @@ def run_single_item(item_name: Optional[str] = None) -> None:
             logging.error("No link provided. Please provide a valid eBay search link.")
             sys.exit(1)
 
-    result, item_name = process_item(link, item_name)
-    if result is None or item_name is None:
+    result = process_item(link, item_name)
+    if result is None:
         sys.exit(1)
 
-    listed_avg, sold_avg, listed_prices, sold_prices = result
-    print(f"Average listed price: ${np.around(listed_avg, 2)}")
-    if sold_avg is not None:
-        print(f"Average sold price: ${np.around(sold_avg, 2)}")
+    print(f"Average listed price: ${result.listed_avg:.2f}")
+    if result.sold_avg is not None:
+        print(f"Average sold price: ${result.sold_avg:.2f}")
 
-    save_to_file(listed_prices, sold_prices, item_name)
+    save_to_file(result.listed_prices, result.sold_prices, result.item_name)
 
 
 def positive_interval(value: str) -> float:
