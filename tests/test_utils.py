@@ -28,6 +28,21 @@ def test_parse_price_invalid():
     assert parse_price("Free shipping") is None
 
 
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("1.234,56 €", 1234.56),  # European: dot grouping, comma decimal
+        ("EUR 1,50", 1.50),  # single comma with 2 decimals
+        ("$1,500", 1500.0),  # 3 trailing digits = grouping
+        ("1.500 €", 1500.0),  # European thousands, no decimals
+        ("1.234.567", 1234567.0),  # repeated separator = grouping
+        ("1500", 1500.0),  # no separators
+    ],
+)
+def test_parse_price_locale_formats(text, expected):
+    assert parse_price(text) == expected
+
+
 # URL Validation (validate_url)
 @pytest.mark.parametrize(
     "url,expected",

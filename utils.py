@@ -241,10 +241,31 @@ def parse_price(price_text: str) -> Optional[float]:
     Returns:
         float: Parsed price if valid, None otherwise
     """
+    cleaned = re.sub(r"[^\d.,]", "", price_text)
+    if not any(c.isdigit() for c in cleaned):
+        return None
+
+    last_dot = cleaned.rfind(".")
+    last_comma = cleaned.rfind(",")
+
+    if last_dot != -1 and last_comma != -1:
+        # Both separators present: the one appearing last is the decimal point
+        if last_dot > last_comma:
+            cleaned = cleaned.replace(",", "")
+        else:
+            cleaned = cleaned.replace(".", "").replace(",", ".")
+    elif last_dot != -1 or last_comma != -1:
+        # One separator type: repeated occurrences or exactly 3 trailing
+        # digits ("1,500", "1.500") mean grouping, otherwise decimal
+        sep = "." if last_dot != -1 else ","
+        digits_after = len(cleaned) - max(last_dot, last_comma) - 1
+        if cleaned.count(sep) > 1 or digits_after == 3:
+            cleaned = cleaned.replace(sep, "")
+        else:
+            cleaned = cleaned.replace(sep, ".")
+
     try:
-        # Remove currency symbol and commas, then convert to float
-        price_text = re.sub(r"[^\d.]", "", price_text)
-        return float(price_text)
+        return float(cleaned)
     except ValueError:
         return None
 
