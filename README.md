@@ -1,241 +1,166 @@
 # eBay Price Tracker
 
-Track eBay search prices, save local history, and run price alerts from a watchlist.
+Track what things actually cost on eBay over time, and get a Discord alert
+when a specific listing shows up at or under your target price.
 
-The tracker uses eBay Buy APIs when credentials are configured. Without API
-credentials, it loads eBay search pages with Playwright, extracts listing
-prices, removes outliers, calculates averages, and can send Discord alerts when
-an item drops to or below a target price.
+- Searches the official eBay Browse API with real filters (condition, price
+  range, category, excluded words), so cases, parts and broken units do not
+  pollute the numbers
+- Fixed-price listings only: an auction's current bid is not a price
+- Reports the **median**, 25th percentile and low, including shipping
+- Stores every check in SQLite, so you build a price history
+- Alerts once per listing (again only if its price drops), and remembers
+  what it already sent across restarts
 
-## What It Does
-
-- Check one item from search terms or an eBay search URL
-- Calculate average listed price
-- Calculate average sold price when sold results exist
-- Save single-item runs to `prices.csv`
-- Monitor many items from `watchlist.yaml`
-- Send Discord webhook alerts for below-target items
-- Avoid duplicate alerts until an item rises back above target
-- Retry transient page-load failures with exponential backoff
-- Process watchlist items concurrently
-
-## Quick Start
-
-### 1. Install dependencies
+## Quick start
 
 ```bash
 uv sync
-uv run playwright install chromium
+cp .env.example .env                              # add your eBay keys
+cp watchlist.example.yaml watchlist.yaml          # add your items
+uv run ebay-tracker check "Steam Deck OLED 1TB" --min-price 250 --condition used
+uv run ebay-tracker watch
 ```
 
-### 2. Configure eBay API credentials
+eBay application keys are free: <https://developer.ebay.com/my/keys>. Use the
+production keys; sandbox returns mock data.
 
-API credentials are optional but recommended because eBay may block automated
-HTML page loads.
+## Configuration
 
-Create `.env` from `.env.example` and fill in your eBay application keys:
+Settings come from environment variables. A `.env` file in the working
+directory is read as a fallback, and real environment variables win.
 
-```bash
-cp .env.example .env
-```
+| Variable | Required | Default | Meaning |
+| --- | --- | --- | --- |
+| `EBAY_CLIENT_ID` | yes | | eBay application client ID |
+| `EBAY_CLIENT_SECRET` | yes | | eBay application client secret |
+| `EBAY_ENVIRONMENT` | | `production` | `production` or `sandbox` |
+| `DISCORD_WEBHOOK_URL` | | | Where alerts are posted. Without it alerts are only logged |
+| `EBAY_MARKETPLACE` | | `EBAY_US` | eBay marketplace ID |
+| `EBAY_CURRENCY` | | `USD` | Listings in other currencies are skipped |
+| `EBAY_TRACKER_DB` | | `ebay_tracker.db` | SQLite file for history and sent alerts |
 
-```dotenv
-EBAY_CLIENT_ID=your-ebay-client-id
-EBAY_CLIENT_SECRET=your-ebay-client-secret
-EBAY_ENVIRONMENT=production
-```
+To get a webhook URL: Discord channel settings → Integrations → Webhooks.
 
-Use `sandbox` only when testing against eBay sandbox APIs. Sandbox responses use
-eBay mock data, so real-world searches may return no useful listings until you
-switch to production keys.
-
-### 3. Run single-item mode
-
-Search by item name:
-
-```bash
-uv run python main.py "Steam Deck OLED 1TB"
-```
-
-Or paste an eBay search URL:
-
-```bash
-uv run python main.py
-```
-
-### 4. Run watch mode
-
-```bash
-uv run python main.py --watch
-```
-
-By default, watch mode runs until stopped and checks every 300 seconds.
-
-## Modes
-
-### Single-item mode
-
-Single-item mode:
-
-- Accepts search terms or an eBay search URL
-- Fetches listed prices from provided or generated search page
-- Fetches sold prices from a generated sold-results search
-- Prints listed and sold averages to terminal
-- Appends one row to `prices.csv` when prices are found
-
-Example:
-
-```bash
-uv run python main.py "Fujifilm X100V Black"
-```
-
-### Watch mode
-
-Watch mode:
-
-- Loads items from `watchlist.yaml`
-- Checks each item against `target_price`
-- Uses sold/completed results when `check_sold: true`
-- Logs triggered alerts to `alerts.log`
-- Optionally posts alerts to a Discord webhook
-- Suppresses repeat alerts while an item remains below target
-
-Examples:
-
-```bash
-uv run python main.py --watch
-uv run python main.py --watch --watch-interval 120
-uv run python main.py --watch --watch-once
-uv run python main.py --watch --watchlist my_items.yaml
-```
-
-## Watchlist Format
-
-Create `watchlist.yaml` in project root:
+## Watchlist
 
 ```yaml
-# Optional: Discord webhook URL
-webhook_url: "https://discord.com/api/webhooks/your-webhook-id/your-token"
-
 items:
-  - name: "Nintendo Switch 2"
-    target_price: 400.00
-
-  - name: "RTX 5090"
-    target_price: 1800.00
-    check_sold: true
+  - name: "Steam Deck OLED 1TB"
+    target_price: 450.00
+    condition: [used, open_box]
+    min_price: 250
+    exclude: ["for parts", "box only", "case"]
 ```
 
-Rules:
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `name` | yes | Label in alerts and history. Also the search keywords unless `query` is set |
+| `target_price` | yes | Alert when price + shipping is at or under this |
+| `query` | | Search keywords, if different from the name |
+| `condition` | | Any of `new`, `open_box`, `certified_refurbished`, `seller_refurbished`, `used`, `for_parts` |
+| `min_price` / `max_price` | | Ignore listings outside this range |
+| `exclude` | | Skip listings whose title contains any of these phrases |
+| `category_id` | | Restrict to one eBay category |
 
-- `items` must be present and must be a list
-- Each item must have non-empty `name`
-- Each item must have numeric `target_price`
-- `check_sold` is optional and defaults to `false`
-- `webhook_url` is optional
+`min_price` is the most effective filter: set it just under the lowest price a
+real, working unit could plausibly sell for.
 
-## Discord Alerts
+## Commands
 
-To create Discord webhook:
-
-1. Open Discord server settings for channel you want.
-2. Go to `Integrations`.
-3. Create webhook.
-4. Paste URL into `watchlist.yaml`.
-
-Alert payload looks like:
-
-```text
-🔔 Price Alert!
-Nintendo Switch 2 average price is now $389.50
-That's $10.50 below your target of $400.00!
-View on eBay: https://www.ebay.com/...
+```bash
+ebay-tracker check <keywords> [--target N] [--condition C] [--min-price N]
+                              [--max-price N] [--exclude TEXT]
+ebay-tracker watch [--watchlist FILE] [--every SECONDS] [--no-alerts]
+ebay-tracker history [NAME] [--limit N]
 ```
 
-## CLI Reference
+- `check` looks up one item, prints the summary and cheapest listings, and
+  records the result. It never sends alerts.
+- `watch` checks every watchlist item once and exits. Add `--every 1800` to
+  keep it running instead.
+- `history` lists tracked items, or shows recorded checks for one item.
 
-| Option | Meaning |
-| --- | --- |
-| `<item>` | Item name to search, like `"Sony WH-1000XM5 Black"` |
-| `--watch`, `-w` | Run continuous watch mode |
-| `--watchlist` | Path to watchlist YAML file. Default: `watchlist.yaml` |
-| `--watch-interval` | Seconds between watch checks. Default: `300` |
-| `--watch-once` | Run one watch cycle, then exit |
+Global options: `--db FILE`, `-v`.
 
-## How It Works
+## Running on a schedule
 
-1. Generate or validate eBay search URL.
-2. Use the eBay Browse API for active listings when `.env` credentials exist.
-3. Use the Marketplace Insights API for sold/completed prices when credentials
-   exist and the eBay application has access.
-4. Load search pages with Playwright Chromium when API credentials are not
-   configured.
-5. Parse prices from API JSON or search results HTML.
-6. Filter outliers with a Z-score rule.
-7. Compute averages with NumPy.
-8. Save results or send alerts depending on mode.
+`watch` exits after one pass, so any scheduler works. With cron, every 30
+minutes:
 
-Implementation details:
+```cron
+*/30 * * * * cd /path/to/ebay_tracker && /path/to/uv run ebay-tracker watch >> watch.log 2>&1
+```
 
-- URL validation only accepts known eBay hostnames
-- Active listings use `GET /buy/browse/v1/item_summary/search`
-- Sold/completed listings use `GET /buy/marketplace_insights/v1_beta/item_sales/search`
-  when the eBay application has access to that API
-- API request failures are logged and return no prices for that check
-- Fetch retry uses exponential backoff
-- Watchlist processing uses async tasks with concurrency limit `3`
-- HTML sold-price checks use eBay sold/complete-results search parameters
+With Docker:
 
-## Files Created
+```bash
+docker build -t ebay-tracker .
+docker run --rm --env-file .env -v "$PWD:/data" ebay-tracker
+```
 
-| File | Purpose |
-| --- | --- |
-| `prices.csv` | History from single-item runs |
-| `alerts.log` | Local log of triggered alerts |
-| `watchlist.yaml` | User-defined watched items |
+The container reads `/data/watchlist.yaml` and writes `/data/ebay_tracker.db`.
 
-## Project Layout
+## How a check works
 
-```text
-.
-├── main.py
-├── alerts.py
-├── ebay_api.py
-├── utils.py
-├── pyproject.toml
-├── watchlist.example.yaml
-├── uv.lock
-└── tests/
+1. Search up to 200 fixed-price listings matching the item's filters, drop
+   excluded titles, and summarize price + shipping. This is the market
+   snapshot that gets stored.
+2. Search again sorted by price and capped at the target. Anything at or
+   under target is a deal.
+3. For each deal not already alerted at that price, post to Discord and
+   record it. At most 3 alerts per item per run.
+
+## The database
+
+Three tables: `items`, `checks` (one row per snapshot) and `alerts`. It is a
+plain SQLite file, so you can query it directly:
+
+```bash
+sqlite3 ebay_tracker.db "
+  SELECT i.name, date(c.checked_at) AS day, ROUND(AVG(c.median), 2) AS median
+  FROM checks c JOIN items i ON i.id = c.item_id
+  GROUP BY i.name, day ORDER BY i.name, day;"
 ```
 
 ## Limitations
 
-- Marketplace Insights access can be restricted by eBay; if your key lacks access,
-  sold/completed prices will be unavailable
-- Sandbox uses mock API data and will not represent production marketplace results
-- Playwright fallback depends on eBay HTML structure and may be blocked by eBay
-- Average price is heuristic, not market appraisal
-- Outlier removal is lightweight and may not fit every niche market
-- Watch mode keeps state in memory, so duplicate-alert suppression resets on restart
+- No sold prices. eBay's only sold-price API (Marketplace Insights) is
+  restricted, so everything here is based on active listings.
+- Asking prices are not selling prices. The median of active listings runs
+  higher than what items actually sell for.
+- Each search reads one page (up to 200 listings), not the whole market.
+- Unknown shipping cost is treated as zero.
 
 ## Development
 
-Install project plus dev tools:
-
 ```bash
 uv sync
-```
-
-Run checks:
-
-```bash
 uv run pytest
 uv run ruff check .
 uv run ruff format .
 uv run pyright
 ```
 
-## Notes
+```text
+src/ebay_tracker/
+├── cli.py        argument parsing and output
+├── config.py     settings from the environment
+├── watchlist.py  YAML loading and validation
+├── ebay.py       eBay API client and search filters
+├── stats.py      median and percentiles
+├── storage.py    SQLite history and sent alerts
+├── alerts.py     deal selection and Discord
+└── tracker.py    ties a check together
+```
 
-- Example watchlist lives in [watchlist.example.yaml](/Users/julius/Dev/ebay_tracker/watchlist.example.yaml)
-- Main CLI entry is [main.py](/Users/julius/Dev/ebay_tracker/main.py)
+## Upgrading from 0.1
+
+- `python main.py "item"` is now `ebay-tracker check "item"`.
+- `python main.py --watch --watch-once` is now `ebay-tracker watch`;
+  `--watch-interval N` is now `--every N`.
+- The Playwright scraper is gone, so API keys are required.
+- Move `webhook_url` from `watchlist.yaml` to `DISCORD_WEBHOOK_URL`. The old
+  key still works for now.
+- `prices.csv` and `alerts.log` are no longer written. History lives in
+  `ebay_tracker.db`.

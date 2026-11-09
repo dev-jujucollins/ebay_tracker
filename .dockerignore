@@ -1,0 +1,13 @@
+.git
+.venv
+.env
+*.db
+watchlist.yaml
+prices.csv
+alerts.log
+tests
+.idea
+.claude
+.pytest_cache
+.ruff_cache
+__pycache__

@@ -1,10 +1,20 @@
-.venv
+# Environments and secrets
+.venv/
 .env
-.xml
-.iml
-.idea
+
+# Local data
+*.db
+*.db-journal
+watchlist.yaml
 prices.csv
 alerts.log
-watchlist.yaml
-__pycache__/utils.cpython-311.pyc
+
+# Tooling
 __pycache__/
+.pytest_cache/
+.ruff_cache/
+.idea/
+.claude/
+.DS_Store
+dist/
+watchlist.yaml.bak

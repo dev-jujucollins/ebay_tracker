@@ -1,14 +1,29 @@
-# eBay Price Tracker Watchlist
-# Copy this file to watchlist.yaml and customize it:
-#   cp watchlist.example.yaml watchlist.yaml
-
-# Optional: Discord webhook URL for notifications
-# webhook_url: "https://discord.com/api/webhooks/your-webhook-id/your-webhook-token"
+# eBay Price Tracker watchlist
+#
+# Required per item:
+#   name          Label used in alerts and history (also the search, unless
+#                 you set `query`)
+#   target_price  Alert when a listing's price + shipping is at or under this
+#
+# Optional filters. Use them: a bare keyword search also returns cases, parts
+# and broken units, which drags every number down.
+#   query         Search keywords, if different from the name
+#   condition     One or more of: new, open_box, certified_refurbished,
+#                 seller_refurbished, used, for_parts
+#   min_price     Ignore listings below this (the simplest accessory filter)
+#   max_price     Ignore listings above this
+#   exclude       Skip listings whose title contains any of these phrases
+#   category_id   eBay category ID to search within
 
 items:
   - name: "Nintendo Switch 2"
     target_price: 400.00
+    condition: [new, open_box, used]
+    min_price: 200
+    exclude: ["for parts", "box only", "empty box", "case", "dock only"]
 
   - name: "RTX 5090"
+    query: "RTX 5090 32GB graphics card"
     target_price: 1800.00
-    check_sold: true  # Monitor sold prices instead of listings
+    min_price: 1000
+    exclude: ["for parts", "box only", "water block", "backplate"]
