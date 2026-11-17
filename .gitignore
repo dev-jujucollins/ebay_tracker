@@ -1,10 +1,9 @@
 .venv
 .env
-.xml
-.iml
 .idea
 prices.csv
 alerts.log
 watchlist.yaml
-__pycache__/utils.cpython-311.pyc
 __pycache__/
+*.db
+*.bak
